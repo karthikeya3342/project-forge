@@ -45,7 +45,7 @@ function NodeIcon({ status }: { status: NodeStatus }) {
 }
 
 export const VantageTelemetryPanel: React.FC = () => {
-  const { currentNode, dependencyMap, wsLog } = useVantageStore();
+  const { currentNode, dependencyMap, wsLog, streamingText, streamingAgent } = useVantageStore();
   const { vantageHitl, setVantageHitl, vantageSessionId, llmConfig, setVantageSessionId } =
     useUiStore() as any;
   const core = useCoreStore();
@@ -57,7 +57,7 @@ export const VantageTelemetryPanel: React.FC = () => {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, streamingText]);
 
   // Derive node statuses from pipeline state
   function nodeStatus(id: string): NodeStatus {
@@ -295,6 +295,24 @@ export const VantageTelemetryPanel: React.FC = () => {
                     </div>
                   </div>
                 ))}
+              {/* Live streaming bubble */}
+              {streamingText && (
+                <div className="flex justify-start">
+                  <div className="max-w-[95%] rounded-xl px-2.5 py-1.5 text-[10px] leading-relaxed bg-zinc-50 text-zinc-700 rounded-tl-none border border-zinc-200">
+                    <div className="flex items-center gap-1 mb-1 pb-1 border-b border-zinc-100">
+                      <Loader2 size={9} className="animate-spin text-cyan-500 shrink-0" />
+                      <span className="text-[9px] text-cyan-500 font-black uppercase tracking-widest">
+                        {streamingAgent || 'agent'} · streaming
+                      </span>
+                    </div>
+                    <span className="whitespace-pre-wrap font-mono text-[9px] break-all">
+                      {streamingText}
+                    </span>
+                    <span className="inline-block w-1 h-3 bg-cyan-400 animate-pulse ml-0.5 align-middle rounded-sm" />
+                  </div>
+                </div>
+              )}
+
               <div ref={chatEndRef} />
             </div>
           )}

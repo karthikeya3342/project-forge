@@ -6,20 +6,18 @@ import ast
 import json
 import re
 from pathlib import Path
-from google import genai
 from backend.orchestrator.state import VantageState
+from backend.agents.utils import call_llm
+from backend.broadcast import broadcast as _broadcast_ws
 
 
 MODEL = "gemma-4-26b-a4b-it"
 
 
 def _call_llm(prompt: str, api_key: str) -> str:
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-    )
-    return response.text or ""
+    def _on_chunk(text: str):
+        _broadcast_ws({"type": "agent_token", "agent": "autocoderover", "text": text})
+    return call_llm(MODEL, prompt, api_key, on_chunk=_on_chunk)
 
 
 class ASTAuditor(ast.NodeVisitor):

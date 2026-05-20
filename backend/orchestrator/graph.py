@@ -1,6 +1,10 @@
 """
 LangGraph orchestrator — central nervous system.
 Routes: codeplan -> parsel -> swe_agent -> autocoderover -> [done|loop|hitl]
+
+HITL note: graph is compiled with interrupt_before=["hitl"], meaning the graph
+PAUSES before hitl_node executes. The HITL broadcast must therefore happen in
+the agent node that sets hitl_required, not inside hitl_node.
 """
 from typing import Literal
 
@@ -17,6 +21,46 @@ from backend.broadcast import broadcast as _broadcast
 
 MAX_STEPS = 50
 
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def _hitl_broadcast(result: dict, agent: str) -> None:
+    """Broadcast HITL event from an agent node (before graph pauses)."""
+    _broadcast({
+        "type": "hitl_required",
+        "agent": agent,
+        "state": "waiting_approval",
+        "message": result.get("hitl_description", "Approval required."),
+        "hitl_type": result.get("hitl_type", "unknown"),
+    })
+
+
+def _completion_broadcast(state: VantageState) -> None:
+    code_changes = state.get("code_changes", [])
+    files_created = [c["path"] for c in code_changes if c.get("action") == "create"]
+    files_modified = [c["path"] for c in code_changes if c.get("action") == "modify"]
+
+    summary_parts = []
+    if files_created:
+        summary_parts.append(f"Created: {', '.join(files_created)}")
+    if files_modified:
+        summary_parts.append(f"Modified: {', '.join(files_modified)}")
+    summary = " | ".join(summary_parts) if summary_parts else "No file changes."
+
+    _broadcast({
+        "type": "pipeline_done",
+        "agent": "orchestrator",
+        "state": "complete",
+        "message": f"Pipeline complete. {summary}",
+        "summary": {
+            "files_created": files_created,
+            "files_modified": files_modified,
+            "ast_passed": state.get("ast_report", {}).get("passed", True),
+        },
+    })
+
+
+# ── Nodes ──────────────────────────────────────────────────────────────────
 
 def codeplan_node(state: VantageState) -> dict:
     _broadcast({"agent": "codeplan", "state": "working", "message": "Scanning workspace..."})
@@ -35,30 +79,33 @@ def parsel_node(state: VantageState) -> dict:
 def swe_agent_node(state: VantageState) -> dict:
     _broadcast({"agent": "swe_agent", "state": "working", "message": "Writing code..."})
     result = run_swe_agent(state)
-    _broadcast(result.get("last_telemetry", {}))
+    if result.get("hitl_required"):
+        # Broadcast NOW — hitl_node won't run until after resume (interrupt_before)
+        _hitl_broadcast(result, "swe_agent")
+    else:
+        _broadcast(result.get("last_telemetry", {}))
     return result
 
 
 def autocoderover_node(state: VantageState) -> dict:
     _broadcast({"agent": "autocoderover", "state": "working", "message": "Running AST audit..."})
     result = run_autocoderover(state)
-    _broadcast(result.get("last_telemetry", {}))
+    if result.get("hitl_required"):
+        _hitl_broadcast(result, "autocoderover")
+    else:
+        _broadcast(result.get("last_telemetry", {}))
     return result
 
 
 def hitl_node(state: VantageState) -> dict:
-    """Pause point — frontend renders Approve/Reject modal."""
-    _broadcast({
-        "agent": "orchestrator",
-        "state": "waiting_approval",
-        "message": state.get("hitl_description", "Human approval required."),
-        "hitl_type": state.get("hitl_type"),
-        "type": "hitl_required",
-    })
-    # LangGraph interrupt — execution halts here until resumed via /api/approve or /api/reject
-    from langgraph.errors import NodeInterrupt
-    raise NodeInterrupt(state.get("hitl_description", "HITL checkpoint"))
+    """
+    Pass-through — the real pause is managed by interrupt_before=["hitl"].
+    On resume the graph re-enters here; state already updated by /api/approve.
+    """
+    return {}
 
+
+# ── Routing ────────────────────────────────────────────────────────────────
 
 def route_after_agent(state: VantageState) -> Literal["hitl", "autocoderover", "end"]:
     if state.get("step_count", 0) >= MAX_STEPS:
@@ -67,7 +114,12 @@ def route_after_agent(state: VantageState) -> Literal["hitl", "autocoderover", "
     if state.get("hitl_required"):
         return "hitl"
     if state.get("status") == "error":
-        _broadcast({"agent": "orchestrator", "state": "error", "message": state.get("last_error", "SWE-agent error.")})
+        _broadcast({
+            "type": "pipeline_error",
+            "agent": "orchestrator",
+            "state": "error",
+            "message": state.get("last_error", "SWE-agent error."),
+        })
         return "end"
     return "autocoderover"
 
@@ -75,15 +127,32 @@ def route_after_agent(state: VantageState) -> Literal["hitl", "autocoderover", "
 def route_after_autocoderover(state: VantageState) -> Literal["hitl", "end"]:
     if state.get("hitl_required"):
         return "hitl"
-    _broadcast({"type": "pipeline_done", "agent": "orchestrator", "state": "complete", "message": "Pipeline complete."})
+    _completion_broadcast(state)
     return "end"
 
 
 def route_after_hitl_resume(state: VantageState) -> Literal["swe_agent", "end"]:
-    if state.get("hitl_approved"):
-        return "swe_agent"
-    return "end"
+    if not state.get("hitl_approved"):
+        _broadcast({
+            "type": "pipeline_error",
+            "agent": "orchestrator",
+            "state": "error",
+            "message": "Pipeline aborted — HITL rejected by user.",
+        })
+        return "end"
 
+    hitl_type = state.get("hitl_type", "unknown")
+
+    if hitl_type == "vulnerability_found":
+        # User accepted AST findings — pipeline is done, no need to re-run SWE-agent
+        _completion_broadcast(state)
+        return "end"
+
+    # dangerous_command — re-run swe_agent now that user approved
+    return "swe_agent"
+
+
+# ── Graph ──────────────────────────────────────────────────────────────────
 
 def build_graph(checkpointer=None) -> StateGraph:
     graph = StateGraph(VantageState)
@@ -109,8 +178,6 @@ def build_graph(checkpointer=None) -> StateGraph:
         route_after_autocoderover,
         {"hitl": "hitl", "end": END},
     )
-
-    # After HITL resolves (resume called externally), route based on approval
     graph.add_conditional_edges(
         "hitl",
         route_after_hitl_resume,

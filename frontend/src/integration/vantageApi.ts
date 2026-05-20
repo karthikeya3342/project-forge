@@ -27,3 +27,16 @@ export async function resolveHITL(
     body: JSON.stringify({ session_id: sessionId, approved }),
   });
 }
+
+export async function fetchWorkspaceTree(
+  workspacePath: string
+): Promise<{ tree: any[]; error?: string }> {
+  try {
+    const res = await fetch(
+      `/api/workspace-tree?path=${encodeURIComponent(workspacePath)}`
+    );
+    return res.json();
+  } catch {
+    return { tree: [] };
+  }
+}

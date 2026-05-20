@@ -132,6 +132,7 @@ async def start_pipeline(req: StartRequest):
         "hitl_type": None,
         "hitl_description": None,
         "hitl_approved": None,
+        "project_dir": None,
         "last_telemetry": {},
     }
 
@@ -204,6 +205,33 @@ async def get_status(session_id: str):
         "step_count": session.step_count,
         "status": session.status,
     }
+
+
+@app.get("/api/workspace-tree")
+async def workspace_tree(path: str):
+    import os
+    root = path
+
+    def _build(p: str) -> list:
+        result = []
+        try:
+            for entry in sorted(os.scandir(p), key=lambda e: (not e.is_dir(), e.name)):
+                rel = os.path.relpath(entry.path, root)
+                node = {
+                    "path": rel.replace("\\", "/"),
+                    "name": entry.name,
+                    "type": "directory" if entry.is_dir() else "file",
+                }
+                if entry.is_dir():
+                    node["children"] = _build(entry.path)
+                result.append(node)
+        except Exception:
+            pass
+        return result
+
+    if not os.path.isdir(root):
+        return {"error": f"Not a directory: {root}", "tree": []}
+    return {"tree": _build(root)}
 
 
 # ── WebSocket ──────────────────────────────────────────────────────────────

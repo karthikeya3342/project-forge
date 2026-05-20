@@ -75,6 +75,13 @@ export function connectVantageWs() {
 
       // ── VANTAGE-specific packet types ────────────────────────────────────
 
+      // Streaming token from an agent's LLM call
+      if (type === 'agent_token') {
+        const chunk = packet.text as string;
+        if (chunk) vantage.appendStreamingChunk(agentName || 'agent', chunk);
+        return; // no further processing needed for token packets
+      }
+
       // File write event: update content cache + mark as modifying
       if (type === 'file_write') {
         const path = packet.path as string;
@@ -150,6 +157,14 @@ export function connectVantageWs() {
               core.approveTask(taskId);
               delete activeTaskIds[agentName];
             }
+            // Flush streamed LLM output as a chat message
+            const streamed = useVantageStore.getState().streamingText;
+            if (streamed) {
+              core.appendAgentHistory(1, 'assistant', [
+                `**[${label}]**\n\n${streamed}`,
+              ]);
+              useVantageStore.getState().clearStreamingText();
+            }
             break;
           }
           case 'error': {
@@ -171,6 +186,15 @@ export function connectVantageWs() {
 
       // ── HITL pause ───────────────────────────────────────────────────────
       if (type === 'hitl_required' || state === 'waiting_approval') {
+        // Flush any partial streamed text before showing modal
+        const hitlStream = useVantageStore.getState().streamingText;
+        if (hitlStream) {
+          const hitlAgent = useVantageStore.getState().streamingAgent;
+          core.appendAgentHistory(1, 'assistant', [
+            `**[${AGENT_LABEL[hitlAgent] ?? hitlAgent}]**\n\n${hitlStream}`,
+          ]);
+          useVantageStore.getState().clearStreamingText();
+        }
         const hitlType = (packet.hitl_type as string) ?? 'unknown';
         const sessionId = (useUiStore.getState() as any).vantageSessionId;
 
@@ -190,20 +214,42 @@ export function connectVantageWs() {
 
       // ── Pipeline complete ────────────────────────────────────────────────
       if (type === 'pipeline_done') {
+        // Flush any in-flight streaming text
+        const remainingStream = useVantageStore.getState().streamingText;
+        if (remainingStream) {
+          const streamAgent = useVantageStore.getState().streamingAgent;
+          core.appendAgentHistory(1, 'assistant', [
+            `**[${AGENT_LABEL[streamAgent] ?? streamAgent}]**\n\n${remainingStream}`,
+          ]);
+          useVantageStore.getState().clearStreamingText();
+        }
+
         Object.keys(activeTaskIds).forEach((name) => delete activeTaskIds[name]);
         Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
         core.setPhase('done');
-        core.appendAgentHistory(1, 'assistant', [
-          '✅ **VANTAGE pipeline complete.**\n\nAll agents finished. Check the file explorer for generated files.',
-        ]);
+
+        const summary = packet.summary as any;
+        let text = '✅ **Pipeline complete!**\n\n';
+        if (summary?.files_created?.length) {
+          text += `📄 **Created:** ${(summary.files_created as string[]).join(', ')}\n`;
+        }
+        if (summary?.files_modified?.length) {
+          text += `✏️ **Modified:** ${(summary.files_modified as string[]).join(', ')}\n`;
+        }
+        if (summary && !summary.ast_passed) {
+          text += `⚠️ AST findings were accepted by user.\n`;
+        }
+        text += `\n${message ?? ''}`;
+        core.appendAgentHistory(1, 'assistant', [text]);
       }
 
       // ── Pipeline error ───────────────────────────────────────────────────
       if (type === 'pipeline_error') {
+        useVantageStore.getState().clearStreamingText();
         Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
         core.setPhase('idle');
         core.appendAgentHistory(1, 'assistant', [
-          `❌ Pipeline error: ${message}`,
+          `❌ **Pipeline error:** ${message}`,
         ]);
       }
 
@@ -225,4 +271,12 @@ export function connectVantageWs() {
 export function disconnectVantageWs() {
   socket?.close();
   socket = null;
+}
+
+// Vite HMR: close stale socket so reconnect picks up new onmessage handler
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    socket?.close();
+    socket = null;
+  });
 }

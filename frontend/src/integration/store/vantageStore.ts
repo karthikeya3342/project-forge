@@ -41,6 +41,10 @@ interface VantageStoreState {
   nodeHistory: string[];
   dependencyMap: Record<string, string[]>;
 
+  // Live streaming
+  streamingAgent: string;
+  streamingText: string;
+
   // Actions
   setFileTree: (tree: FileNode[]) => void;
   setSelectedFilePath: (path: string | null) => void;
@@ -52,6 +56,8 @@ interface VantageStoreState {
   setConsoleTab: (tab: ConsoleTab) => void;
   setCurrentNode: (node: string) => void;
   setDependencyMap: (map: Record<string, string[]>) => void;
+  appendStreamingChunk: (agent: string, chunk: string) => void;
+  clearStreamingText: () => void;
   reset: () => void;
 }
 
@@ -67,6 +73,8 @@ const INITIAL: Omit<
   | 'setConsoleTab'
   | 'setCurrentNode'
   | 'setDependencyMap'
+  | 'appendStreamingChunk'
+  | 'clearStreamingText'
   | 'reset'
 > = {
   fileTree: [],
@@ -80,6 +88,8 @@ const INITIAL: Omit<
   currentNode: '',
   nodeHistory: [],
   dependencyMap: {},
+  streamingAgent: '',
+  streamingText: '',
 };
 
 export const useVantageStore = create<VantageStoreState>()((set) => ({
@@ -117,6 +127,14 @@ export const useVantageStore = create<VantageStoreState>()((set) => ({
     })),
 
   setDependencyMap: (map) => set({ dependencyMap: map }),
+
+  appendStreamingChunk: (agent, chunk) =>
+    set((s) => ({
+      streamingAgent: agent,
+      streamingText: s.streamingText + chunk,
+    })),
+
+  clearStreamingText: () => set({ streamingAgent: '', streamingText: '' }),
 
   reset: () =>
     set({

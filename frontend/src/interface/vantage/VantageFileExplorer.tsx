@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen, Loader2 } from 'lucide-react';
 import { useVantageStore, FileNode } from '../../integration/store/vantageStore';
+import { useUiStore } from '../../integration/store/uiStore';
+import { fetchWorkspaceTree } from '../../integration/vantageApi';
 
 const EXT_COLORS: Record<string, string> = {
   py: '#3b82f6',
@@ -92,6 +94,18 @@ const FileTreeNode: React.FC<NodeProps> = ({ node, depth }) => {
 
 export const VantageFileExplorer: React.FC = () => {
   const { fileTree } = useVantageStore();
+  const { llmConfig } = useUiStore() as any;
+  const setFileTree = useVantageStore((s) => s.setFileTree);
+
+  useEffect(() => {
+    const wp = llmConfig?.workspacePath;
+    if (!wp) return;
+    fetchWorkspaceTree(wp).then((res) => {
+      if (res.tree && res.tree.length > 0) {
+        setFileTree(res.tree);
+      }
+    });
+  }, [llmConfig?.workspacePath]);
 
   return (
     <div className="w-56 h-full bg-white border-r border-zinc-200 flex flex-col overflow-hidden shrink-0">

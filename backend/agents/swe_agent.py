@@ -12,13 +12,13 @@ import json
 import re
 import os
 from pathlib import Path
-from google import genai
 from backend.orchestrator.state import VantageState
 from backend.sandbox.docker_runner import DockerRunner
 from backend.broadcast import broadcast as _broadcast_ws
+from backend.agents.utils import call_llm
 
 
-MODEL = "gemma-4-31b-it"
+MODEL = "gemma-4-26b-a4b-it"
 
 # Only truly destructive commands warrant HITL
 DANGEROUS_CMD_PATTERNS = [
@@ -41,12 +41,9 @@ DANGEROUS_CMD_PATTERNS = [
 
 
 def _call_llm(prompt: str, api_key: str) -> str:
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-    )
-    return response.text or ""
+    def _on_chunk(text: str):
+        _broadcast_ws({"type": "agent_token", "agent": "swe_agent", "text": text})
+    return call_llm(MODEL, prompt, api_key, on_chunk=_on_chunk)
 
 
 def is_dangerous_command(cmd: str) -> bool:

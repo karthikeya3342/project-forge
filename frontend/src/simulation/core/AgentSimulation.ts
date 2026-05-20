@@ -134,6 +134,9 @@ export class AgentSimulation {
   }
 
   private async checkProjectCompletion() {
+    // VANTAGE: completion driven by backend pipeline_done event — never fire local LLM delivery
+    if (this.system.id === 'vantage') return;
+
     const state = useCoreStore.getState();
     const allTasksFinished = state.tasks.length > 0 && state.tasks.every(t => t.status === 'done');
     

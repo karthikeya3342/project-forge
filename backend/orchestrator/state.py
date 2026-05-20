@@ -24,6 +24,9 @@ class VantageState(TypedDict):
     ast_report: dict               # {vulnerabilities: [...], passed: bool}
     vulnerability_flags: list[str]
 
+    # Project directory (subfolder created by CodePlan for this task)
+    project_dir: Optional[str]
+
     # Orchestrator control
     step_count: Annotated[int, operator.add]
     current_agent: str

@@ -167,7 +167,11 @@ export class AgentBrain {
     } catch (error) {
       console.error(`[AgentBrain:${this.host.data.name}] Logic error:`, error);
       const errMsg = error instanceof Error ? error.message : String(error);
-      useUiStore.getState().setBYOKOpen(true, errMsg);
+      // VANTAGE pipeline errors belong in the telemetry panel, not the BYOK modal
+      const activeTeamId = useTeamStore.getState().selectedAgentSetId;
+      if (activeTeamId !== 'vantage') {
+        useUiStore.getState().setBYOKOpen(true, errMsg);
+      }
       throw error;
     } finally {
       this.isThinking = false;
@@ -292,7 +296,10 @@ export class AgentBrain {
       console.error('[AgentBrain] Final asset generation failed:', error);
       core.setIsGeneratingAsset(false);
       const errMsg = error instanceof Error ? error.message : String(error);
-      useUiStore.getState().setBYOKOpen(true, errMsg);
+      const activeTeamId = useTeamStore.getState().selectedAgentSetId;
+      if (activeTeamId !== 'vantage') {
+        useUiStore.getState().setBYOKOpen(true, errMsg);
+      }
       core.addLogEntry({
         agentIndex: 0,
         action: `Error generating final ${activeTeam.outputType}: ${errMsg}`,
