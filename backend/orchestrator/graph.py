@@ -2,8 +2,6 @@
 LangGraph orchestrator — central nervous system.
 Routes: codeplan -> parsel -> swe_agent -> autocoderover -> [done|loop|hitl]
 """
-import asyncio
-import json
 from typing import Literal
 
 from langgraph.graph import StateGraph, END
@@ -14,27 +12,10 @@ from backend.agents.codeplan import run_codeplan
 from backend.agents.parsel import run_parsel
 from backend.agents.swe_agent import run_swe_agent
 from backend.agents.autocoderover import run_autocoderover
+from backend.broadcast import broadcast as _broadcast
 
 
 MAX_STEPS = 50
-
-# Module-level WebSocket broadcast callback — set by main.py at startup
-_broadcast_fn = None
-
-
-def set_broadcast(fn):
-    global _broadcast_fn
-    _broadcast_fn = fn
-
-
-def _broadcast(telemetry: dict):
-    if _broadcast_fn:
-        try:
-            asyncio.get_event_loop().call_soon_threadsafe(
-                asyncio.ensure_future, _broadcast_fn(json.dumps(telemetry))
-            )
-        except Exception:
-            pass
 
 
 def codeplan_node(state: VantageState) -> dict:
@@ -79,26 +60,22 @@ def hitl_node(state: VantageState) -> dict:
     raise NodeInterrupt(state.get("hitl_description", "HITL checkpoint"))
 
 
-def route_after_agent(state: VantageState) -> Literal["hitl", "autocoderover", "codeplan", "end"]:
+def route_after_agent(state: VantageState) -> Literal["hitl", "autocoderover", "end"]:
     if state.get("step_count", 0) >= MAX_STEPS:
         _broadcast({"agent": "orchestrator", "state": "error", "message": "Max steps reached."})
         return "end"
     if state.get("hitl_required"):
         return "hitl"
-    if state.get("status") == "complete":
-        _broadcast({"agent": "orchestrator", "state": "complete", "message": "Pipeline complete.", "type": "pipeline_done"})
-        return "end"
     if state.get("status") == "error":
+        _broadcast({"agent": "orchestrator", "state": "error", "message": state.get("last_error", "SWE-agent error.")})
         return "end"
     return "autocoderover"
 
 
-def route_after_autocoderover(state: VantageState) -> Literal["hitl", "codeplan", "end"]:
+def route_after_autocoderover(state: VantageState) -> Literal["hitl", "end"]:
     if state.get("hitl_required"):
         return "hitl"
-    if state.get("status") == "complete":
-        return "end"
-    # Loop back for next task if more steps remain
+    _broadcast({"type": "pipeline_done", "agent": "orchestrator", "state": "complete", "message": "Pipeline complete."})
     return "end"
 
 
@@ -130,7 +107,7 @@ def build_graph(checkpointer=None) -> StateGraph:
     graph.add_conditional_edges(
         "autocoderover",
         route_after_autocoderover,
-        {"hitl": "hitl", "codeplan": "codeplan", "end": END},
+        {"hitl": "hitl", "end": END},
     )
 
     # After HITL resolves (resume called externally), route based on approval

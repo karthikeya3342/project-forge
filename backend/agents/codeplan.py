@@ -3,13 +3,24 @@ CodePlan — neuro-symbolic repository mapper.
 Scans workspace, builds file dependency graph, generates ordered execution plan.
 """
 import ast
-import os
+import json
+import re
 from pathlib import Path
-from langchain_google_genai import ChatGoogleGenerativeAI
+from google import genai
 from backend.orchestrator.state import VantageState
+from backend.broadcast import broadcast as _broadcast_ws
 
 
-MODEL = "gemma4-26B-it"  # verify exact ID in Google AI Studio
+MODEL = "gemma-4-26b-a4b-it"
+
+
+def _call_llm(prompt: str, api_key: str) -> str:
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+    )
+    return response.text or ""
 
 
 def build_dependency_map(workspace_path: str) -> dict:
@@ -44,12 +55,6 @@ def build_dependency_map(workspace_path: str) -> dict:
 def run_codeplan(state: VantageState) -> dict:
     dep_map = build_dependency_map(state["workspace_path"])
 
-    llm = ChatGoogleGenerativeAI(
-        model=MODEL,
-        google_api_key=state["google_api_key"],
-        temperature=0.2,
-    )
-
     workspace_summary = "\n".join(
         f"{f}: depends on {deps}" for f, deps in dep_map.items()
     ) or "Empty workspace — no Python files found."
@@ -72,10 +77,27 @@ Respond as a JSON object:
   "risky_overwrites": ["file1.py", "file2.py"]
 }}"""
 
-    response = llm.invoke(prompt)
-    import json, re
-    match = re.search(r"\{.*\}", response.content, re.DOTALL)
-    parsed = json.loads(match.group()) if match else {"plan": [response.content], "risky_overwrites": []}
+    text = _call_llm(prompt, state["google_api_key"])
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    parsed = json.loads(match.group()) if match else {"plan": [text], "risky_overwrites": []}
+
+    # Build file tree for frontend
+    def _build_tree(path: str, root: str) -> list:
+        import os
+        result = []
+        try:
+            for entry in sorted(os.scandir(path), key=lambda e: (not e.is_dir(), e.name)):
+                rel = os.path.relpath(entry.path, root)
+                node = {"path": rel.replace("\\", "/"), "name": entry.name, "type": "directory" if entry.is_dir() else "file"}
+                if entry.is_dir():
+                    node["children"] = _build_tree(entry.path, root)
+                result.append(node)
+        except Exception:
+            pass
+        return result
+
+    _broadcast_ws({"type": "dependency_map", "map": dep_map})
+    _broadcast_ws({"type": "file_tree", "tree": _build_tree(state["workspace_path"], state["workspace_path"])})
 
     return {
         "file_dependency_map": dep_map,

@@ -2,6 +2,20 @@ import asyncio
 import json
 import os
 import uuid
+
+# Patch Python SSL to use certifi CA bundle — fixes Windows cert chain issues with httpx/requests
+import ssl
+import certifi
+
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+
+_orig_create_default_context = ssl.create_default_context
+def _patched_create_default_context(purpose=ssl.Purpose.SERVER_AUTH, *args, **kwargs):
+    ctx = _orig_create_default_context(purpose, *args, **kwargs)
+    ctx.load_verify_locations(certifi.where())
+    return ctx
+ssl.create_default_context = _patched_create_default_context
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Set
@@ -14,7 +28,8 @@ from pydantic import BaseModel
 
 from backend.db.database import init_db, SessionLocal
 from backend.db.models import AgentSession, HITLCheckpoint
-from backend.orchestrator.graph import build_graph, set_broadcast
+from backend.orchestrator.graph import build_graph
+from backend.broadcast import set_broadcast
 from langgraph.checkpoint.memory import MemorySaver
 
 load_dotenv()
@@ -50,7 +65,8 @@ async def broadcast_telemetry(message: str):
 async def lifespan(app: FastAPI):
     os.makedirs("data", exist_ok=True)
     init_db()
-    set_broadcast(broadcast_telemetry)
+    loop = asyncio.get_running_loop()
+    set_broadcast(broadcast_telemetry, loop)
     yield
 
 
@@ -58,7 +74,7 @@ app = FastAPI(title="VANTAGE Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

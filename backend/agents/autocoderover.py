@@ -4,12 +4,22 @@ Traverses AST of written code to detect vulnerabilities before accepting changes
 """
 import ast
 import json
+import re
 from pathlib import Path
-from langchain_google_genai import ChatGoogleGenerativeAI
+from google import genai
 from backend.orchestrator.state import VantageState
 
 
-MODEL = "gemma4-26B-it"  # verify exact ID in Google AI Studio
+MODEL = "gemma-4-26b-a4b-it"
+
+
+def _call_llm(prompt: str, api_key: str) -> str:
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+    )
+    return response.text or ""
 
 
 class ASTAuditor(ast.NodeVisitor):
@@ -22,7 +32,6 @@ class ASTAuditor(ast.NodeVisitor):
 
     def visit_While(self, node: ast.While):
         self._loop_depth += 1
-        # Flag while True with no break
         if isinstance(node.test, ast.Constant) and node.test.value is True:
             has_break = any(isinstance(n, ast.Break) for n in ast.walk(node))
             if not has_break:
@@ -37,7 +46,6 @@ class ASTAuditor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        # Detect direct recursion without base case guard
         calls_self = any(
             isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == node.name
             for n in ast.walk(node)
@@ -51,7 +59,6 @@ class ASTAuditor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
-        # Detect open() without context manager
         if isinstance(node.value, ast.Call):
             if isinstance(node.value.func, ast.Name) and node.value.func.id == "open":
                 self.issues.append(
@@ -73,12 +80,10 @@ def audit_file(content: str, filename: str) -> list[str]:
 def run_autocoderover(state: VantageState) -> dict:
     all_issues: list[str] = []
 
-    # Audit all changed files
     for change in state.get("code_changes", []):
         issues = audit_file(change.get("content", ""), change.get("path", "unknown"))
         all_issues.extend(issues)
 
-    # Also audit existing workspace Python files
     try:
         workspace = Path(state["workspace_path"])
         for py_file in workspace.rglob("*.py"):
@@ -114,13 +119,6 @@ def run_autocoderover(state: VantageState) -> dict:
             },
         }
 
-    # Use LLM for semantic review if AST passes
-    llm = ChatGoogleGenerativeAI(
-        model=MODEL,
-        google_api_key=state["google_api_key"],
-        temperature=0.0,
-    )
-
     changes_summary = json.dumps(
         [{"path": c["path"], "content": c["content"][:500]} for c in state.get("code_changes", [])],
         indent=2,
@@ -135,9 +133,8 @@ Changes:
 
 Respond with JSON: {{"approved": true/false, "reason": "..."}}"""
 
-    response = llm.invoke(prompt)
-    import re
-    match = re.search(r"\{.*\}", response.content, re.DOTALL)
+    text = _call_llm(prompt, state["google_api_key"])
+    match = re.search(r"\{.*\}", text, re.DOTALL)
     review = json.loads(match.group()) if match else {"approved": True, "reason": "AST passed"}
 
     return {

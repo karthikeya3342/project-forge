@@ -5,6 +5,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useCoreStore } from './integration/store/coreStore';
+import { useActiveTeam } from './integration/store/teamStore';
 import { ActionLogPanel } from './interface/ActionLogPanel';
 import { FinalOutputModal } from './interface/FinalOutputModal';
 import Header from './interface/Header';
@@ -13,6 +14,7 @@ import { KanbanPanel } from './interface/KanbanPanel';
 import { OutputReviewModal } from './interface/OutputReviewModal';
 import SimulationView from './interface/SimulationView';
 import { VantageHITLOverlay } from './interface/VantageHITLOverlay';
+import { VantageLayout } from './interface/vantage/VantageLayout';
 import { VisualConfigurator } from './interface/VisualConfigurator/VisualConfigurator';
 import { SceneContext } from './simulation/SceneContext';
 import { SceneManager } from './simulation/SceneManager';
@@ -23,6 +25,8 @@ const App: React.FC = () => {
   const managerRef = useRef<SceneManager | null>(null);
   const [sceneManager, setSceneManager] = useState<SceneManager | null>(null);
   const { isLogOpen, isKanbanOpen, setIsResizing, viewMode, setViewMode } = useCoreStore();
+  const activeTeam = useActiveTeam();
+  const isVantage = activeTeam.id === 'vantage';
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [kanbanHeight, setKanbanHeight] = useState(220);
@@ -71,6 +75,16 @@ const App: React.FC = () => {
       }
     };
   }, []);
+
+  // VANTAGE layout — dark 4-panel engineering UI
+  if (isVantage) {
+    return (
+      <SceneContext.Provider value={sceneManager}>
+        <VantageLayout canvasRef={canvasRef} />
+        <VantageHITLOverlay />
+      </SceneContext.Provider>
+    );
+  }
 
   return (
     <SceneContext.Provider value={sceneManager}>

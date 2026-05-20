@@ -2,13 +2,14 @@
  * VANTAGE WebSocket bridge.
  *
  * Receives backend telemetry and drives:
- * 1. agentStatuses (animates 3D characters)
- * 2. coreStore tasks (populates Kanban with pipeline steps)
- * 3. coreStore phase (working → done/error)
+ * 1. vantageStore (file tree, code contents, dep map, console logs)
+ * 2. agentStatuses (animates 3D characters)
+ * 3. coreStore tasks (populates Kanban with pipeline steps)
  * 4. vantageHitl (triggers HITL approval overlay)
  */
 import { useUiStore } from './store/uiStore';
 import { useCoreStore } from './store/coreStore';
+import { useVantageStore } from './store/vantageStore';
 import type { AgentState } from '../types';
 
 // Backend agent name → 3D character index
@@ -53,42 +54,85 @@ export function connectVantageWs() {
 
   socket.onmessage = (event) => {
     try {
-      const packet = JSON.parse(event.data as string) as {
-        type?: string;
-        agent?: string;
-        state?: string;
-        message?: string;
-        hitl_type?: string;
-      };
+      const raw = event.data as string;
+      const packet = JSON.parse(raw) as Record<string, unknown>;
 
       const ui = useUiStore.getState() as any;
       const core = useCoreStore.getState();
-      const agentName = packet.agent ?? '';
+      const vantage = useVantageStore.getState();
+
+      // ── Always append to WS log ──────────────────────────────────────────
+      vantage.appendWsLog({ ts: Date.now(), raw, packet });
+
+      const type = packet.type as string | undefined;
+      const agentName = (packet.agent as string) ?? '';
       const agentIdx = AGENT_INDEX[agentName];
       const label = AGENT_LABEL[agentName] ?? agentName;
+      const state = packet.state as string | undefined;
+      const message = packet.message as string | undefined;
 
-      // 1. Drive 3D character animation
-      if (agentIdx !== undefined) {
-        ui.setAgentStatus(agentIdx, STATE_MAP[packet.state ?? 'idle'] ?? 'idle');
+      // ── VANTAGE-specific packet types ────────────────────────────────────
+
+      // File write event: update content cache + mark as modifying
+      if (type === 'file_write') {
+        const path = packet.path as string;
+        const content = packet.content as string;
+        vantage.setFileContent(path, content);
+        vantage.setModifyingFile(path, true);
+        // Clear modifying indicator after 2s
+        setTimeout(() => {
+          useVantageStore.getState().setModifyingFile(path, false);
+        }, 2000);
       }
 
-      // 2. Append to action log
-      if (packet.message && agentName) {
+      // File tree update
+      if (type === 'file_tree') {
+        const tree = packet.tree as any[];
+        vantage.setFileTree(tree);
+      }
+
+      // Dependency map update
+      if (type === 'dependency_map') {
+        const map = packet.map as Record<string, string[]>;
+        vantage.setDependencyMap(map);
+      }
+
+      // Terminal output
+      if (type === 'terminal_output') {
+        const output = packet.output as string;
+        vantage.appendTerminalLog({ ts: Date.now(), output });
+        vantage.setConsoleTab('terminal');
+      }
+
+      // Track current pipeline node
+      if (agentName && state === 'working') {
+        vantage.setCurrentNode(agentName);
+      }
+      if (type === 'pipeline_done' || type === 'pipeline_error') {
+        vantage.setCurrentNode('');
+      }
+
+      // ── 3D character animation ───────────────────────────────────────────
+      if (agentIdx !== undefined) {
+        ui.setAgentStatus(agentIdx, STATE_MAP[state ?? 'idle'] ?? 'idle');
+      }
+
+      // ── Action log ───────────────────────────────────────────────────────
+      if (message && agentName) {
         core.addLogEntry({
           agentIndex: agentIdx ?? 0,
-          action: `[${packet.state?.toUpperCase()}] ${packet.message}`,
+          action: `[${state?.toUpperCase()}] ${message}`,
         });
       }
 
-      // 3. Drive Kanban tasks per agent
-      if (agentIdx !== undefined && packet.state) {
-        switch (packet.state) {
+      // ── Kanban tasks per agent ───────────────────────────────────────────
+      if (agentIdx !== undefined && state) {
+        switch (state) {
           case 'working': {
-            // Create task for this agent if not already running
             if (!activeTaskIds[agentName]) {
               const task = core.addTask({
-                title: `${label}: ${packet.message?.slice(0, 60) ?? 'Working...'}`,
-                description: packet.message ?? '',
+                title: `${label}: ${message?.slice(0, 60) ?? 'Working...'}`,
+                description: message ?? '',
                 assignedAgentId: agentIdx,
                 status: 'in_progress',
                 requiresUserApproval: false,
@@ -100,7 +144,7 @@ export function connectVantageWs() {
           case 'complete': {
             const taskId = activeTaskIds[agentName];
             if (taskId) {
-              core.setTaskOutput(taskId, packet.message ?? 'Done.');
+              core.setTaskOutput(taskId, message ?? 'Done.');
               core.approveTask(taskId);
               delete activeTaskIds[agentName];
             }
@@ -116,36 +160,38 @@ export function connectVantageWs() {
           case 'waiting_approval': {
             const taskId = activeTaskIds[agentName];
             if (taskId) {
-              core.submitTaskForReview(taskId, packet.message ?? 'Approval required.');
+              core.submitTaskForReview(taskId, message ?? 'Approval required.');
             }
             break;
           }
         }
       }
 
-      // 4. Handle HITL pause
-      if (packet.type === 'hitl_required' || packet.state === 'waiting_approval') {
+      // ── HITL pause ───────────────────────────────────────────────────────
+      if (type === 'hitl_required' || state === 'waiting_approval') {
         ui.setVantageHitl({
-          type: packet.hitl_type ?? 'unknown',
-          description: packet.message ?? 'Agent requires approval.',
+          type: (packet.hitl_type as string) ?? 'unknown',
+          description: message ?? 'Agent requires approval.',
         });
       }
 
-      // 5. Pipeline complete
-      if (packet.type === 'pipeline_done') {
+      // ── Pipeline complete ────────────────────────────────────────────────
+      if (type === 'pipeline_done') {
         Object.keys(activeTaskIds).forEach((name) => delete activeTaskIds[name]);
         Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
         core.setPhase('done');
         core.appendAgentHistory(1, 'assistant', [
-          '✅ **VANTAGE pipeline complete.** All agents have finished.\n\nCheck your workspace directory for the generated files.'
+          '✅ **VANTAGE pipeline complete.**\n\nAll agents finished. Check the file explorer for generated files.',
         ]);
       }
 
-      // 6. Pipeline error
-      if (packet.type === 'pipeline_error') {
+      // ── Pipeline error ───────────────────────────────────────────────────
+      if (type === 'pipeline_error') {
         Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
         core.setPhase('idle');
-        core.appendAgentHistory(1, 'assistant', [`❌ Pipeline error: ${packet.message}`]);
+        core.appendAgentHistory(1, 'assistant', [
+          `❌ Pipeline error: ${message}`,
+        ]);
       }
 
     } catch {

@@ -6,12 +6,13 @@ ACI: Agent-Computer Interface pattern.
 import json
 import re
 from pathlib import Path
-from langchain_google_genai import ChatGoogleGenerativeAI
+from google import genai
 from backend.orchestrator.state import VantageState
 from backend.sandbox.docker_runner import DockerRunner
+from backend.broadcast import broadcast as _broadcast_ws
 
 
-MODEL = "gemma4-31b-it"  # verify exact ID in Google AI Studio
+MODEL = "gemma-4-31b-it"
 
 HIGH_RISK_PATTERNS = [
     "setup.py", "requirements.txt", "pyproject.toml",
@@ -20,18 +21,21 @@ HIGH_RISK_PATTERNS = [
 ]
 
 
+def _call_llm(prompt: str, api_key: str) -> str:
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+    )
+    return response.text or ""
+
+
 def is_high_risk_overwrite(file_path: str, risky_list: list[str]) -> bool:
     name = Path(file_path).name
     return name in HIGH_RISK_PATTERNS or file_path in risky_list
 
 
 def run_swe_agent(state: VantageState) -> dict:
-    llm = ChatGoogleGenerativeAI(
-        model=MODEL,
-        google_api_key=state["google_api_key"],
-        temperature=0.1,
-    )
-
     tasks_text = json.dumps(state.get("decomposed_tasks", []), indent=2)
     plan_text = "\n".join(state.get("execution_plan", []))
 
@@ -60,14 +64,13 @@ Write the actual code. For each file to create/modify respond with:
 
 IMPORTANT: paths must be relative, no leading slash."""
 
-    response = llm.invoke(prompt)
-    match = re.search(r"\{.*\}", response.content, re.DOTALL)
+    text = _call_llm(prompt, state["google_api_key"])
+    match = re.search(r"\{.*\}", text, re.DOTALL)
     result = json.loads(match.group()) if match else {"files": [], "commands": []}
 
     runner = DockerRunner(state["workspace_path"])
     risky_list = list(state.get("file_dependency_map", {}).keys())
 
-    # Check for high-risk overwrites before writing
     risky_files = [
         f["path"] for f in result.get("files", [])
         if is_high_risk_overwrite(f["path"], risky_list)
@@ -88,11 +91,25 @@ IMPORTANT: paths must be relative, no leading slash."""
             },
         }
 
-    # Write files into workspace via Docker mount
     for file_spec in result.get("files", []):
         runner.write_file(file_spec["path"], file_spec["content"])
+        _broadcast_ws({"type": "file_write", "path": file_spec["path"], "content": file_spec["content"]})
 
-    # Execute commands inside container
+    import os
+    def _build_tree(path: str, root: str) -> list:
+        result = []
+        try:
+            for entry in sorted(os.scandir(path), key=lambda e: (not e.is_dir(), e.name)):
+                rel = os.path.relpath(entry.path, root)
+                node = {"path": rel.replace("\\", "/"), "name": entry.name, "type": "directory" if entry.is_dir() else "file"}
+                if entry.is_dir():
+                    node["children"] = _build_tree(entry.path, root)
+                result.append(node)
+        except Exception:
+            pass
+        return result
+    _broadcast_ws({"type": "file_tree", "tree": _build_tree(state["workspace_path"], state["workspace_path"])})
+
     last_output = ""
     last_error = None
     for cmd in result.get("commands", []):

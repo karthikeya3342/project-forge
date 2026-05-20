@@ -4,20 +4,23 @@ Breaks complex tasks into isolated helper functions with base cases first.
 """
 import json
 import re
-from langchain_google_genai import ChatGoogleGenerativeAI
+from google import genai
 from backend.orchestrator.state import VantageState
 
 
-MODEL = "gemma4-31b-it"  # large model for complex decomposition — verify ID in Google AI Studio
+MODEL = "gemma-4-31b-it"
+
+
+def _call_llm(prompt: str, api_key: str) -> str:
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+    )
+    return response.text or ""
 
 
 def run_parsel(state: VantageState) -> dict:
-    llm = ChatGoogleGenerativeAI(
-        model=MODEL,
-        google_api_key=state["google_api_key"],
-        temperature=0.3,
-    )
-
     plan_text = "\n".join(
         f"{i + 1}. {step}" for i, step in enumerate(state.get("execution_plan", []))
     )
@@ -48,9 +51,9 @@ Respond as a JSON array:
   ...
 ]"""
 
-    response = llm.invoke(prompt)
-    match = re.search(r"\[.*\]", response.content, re.DOTALL)
-    tasks = json.loads(match.group()) if match else [{"step_index": 0, "function_name": "main_task", "purpose": response.content, "base_case": True, "depends_on": []}]
+    text = _call_llm(prompt, state["google_api_key"])
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    tasks = json.loads(match.group()) if match else [{"step_index": 0, "function_name": "main_task", "purpose": text, "base_case": True, "depends_on": []}]
 
     return {
         "decomposed_tasks": tasks,
