@@ -15,9 +15,21 @@ from pydantic import BaseModel
 from backend.db.database import init_db, SessionLocal
 from backend.db.models import AgentSession, HITLCheckpoint
 from backend.orchestrator.graph import build_graph, set_broadcast
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
 load_dotenv()
+
+# ── Module-level checkpointer + graph (shared so HITL resume works) ────────
+_checkpointer = MemorySaver()
+_graph = None  # built after lifespan sets broadcast
+
+
+def get_graph():
+    global _graph
+    if _graph is None:
+        _graph = build_graph(checkpointer=_checkpointer)
+    return _graph
+
 
 # ── WebSocket connection registry ──────────────────────────────────────────
 active_connections: Set[WebSocket] = set()
@@ -107,8 +119,7 @@ async def start_pipeline(req: StartRequest):
         "last_telemetry": {},
     }
 
-    checkpointer = SqliteSaver.from_conn_string("data/vantage.db")
-    graph = build_graph(checkpointer=checkpointer)
+    graph = get_graph()
 
     # Run pipeline in background task
     asyncio.create_task(_run_pipeline(graph, initial_state, session_id))
@@ -141,8 +152,7 @@ async def _run_pipeline(graph, state: dict, session_id: str):
 
 @app.post("/api/approve")
 async def approve_hitl(req: HITLResponse):
-    checkpointer = SqliteSaver.from_conn_string("data/vantage.db")
-    graph = build_graph(checkpointer=checkpointer)
+    graph = get_graph()
     config = {"configurable": {"thread_id": req.session_id}}
 
     # Resume graph with approval

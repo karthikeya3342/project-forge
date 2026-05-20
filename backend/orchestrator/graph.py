@@ -7,7 +7,7 @@ import json
 from typing import Literal
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
 from backend.orchestrator.state import VantageState
 from backend.agents.codeplan import run_codeplan
