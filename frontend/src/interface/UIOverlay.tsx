@@ -86,8 +86,9 @@ const UIOverlay: React.FC = () => {
     hoveredPoiLabel,
     hoverPosition,
     npcScreenPositions,
+    agentStatuses,
     setSelectedNpc,
-  } = useUiStore();
+  } = useUiStore() as any;
   const [isHelpOpen, setHelpOpen] = useState(false);
   const {
     tasks,
@@ -104,6 +105,58 @@ const UIOverlay: React.FC = () => {
 
   return (
     <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden select-none">
+
+      {/* 0. Working agent — pulsing ring + persistent "Working" label */}
+      {npcAgents.map((agent: any) => {
+        const pos = npcScreenPositions[agent.index];
+        if (!pos) return null;
+        const isWorking = (agentStatuses ?? {})[agent.index] === 'working';
+        if (!isWorking) return null;
+
+        return (
+          <React.Fragment key={`working-${agent.index}`}>
+            {/* Pulsing ring around character body */}
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: pos.x,
+                top: pos.y,
+                transform: 'translate(-50%, -20%)',
+              }}
+            >
+              <div
+                className="w-20 h-20 rounded-full animate-ping"
+                style={{
+                  border: `2px solid ${agent.color ?? '#34d399'}`,
+                  opacity: 0.55,
+                }}
+              />
+            </div>
+            {/* Persistent "Working..." label — hides when hovered/selected (detailed bubble takes over) */}
+            {hoveredNpcIndex !== agent.index && selectedNpcIndex !== agent.index && (
+              <div
+                className="absolute pointer-events-none"
+                style={{
+                  left: pos.x,
+                  top: pos.y,
+                  transform: 'translate(-50%, -100%) translateY(-14px)',
+                }}
+              >
+                <div className="bg-darkDelegation/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+                  <div
+                    className="w-1.5 h-1.5 rounded-full animate-pulse"
+                    style={{ backgroundColor: agent.color ?? '#34d399' }}
+                  />
+                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400">
+                    Working
+                  </span>
+                </div>
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
+
       {/* 1. Parallel Alert Bubbles System */}
       {npcAgents.map((agent) => {
         const pos = npcScreenPositions[agent.index];

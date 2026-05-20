@@ -10,6 +10,8 @@
 import { useUiStore } from './store/uiStore';
 import { useCoreStore } from './store/coreStore';
 import { useVantageStore } from './store/vantageStore';
+import { isAlwaysAllowed } from './vantageAlwaysAllow';
+import { resolveHITL } from './vantageApi';
 import type { AgentState } from '../types';
 
 // Backend agent name → 3D character index
@@ -169,10 +171,21 @@ export function connectVantageWs() {
 
       // ── HITL pause ───────────────────────────────────────────────────────
       if (type === 'hitl_required' || state === 'waiting_approval') {
-        ui.setVantageHitl({
-          type: (packet.hitl_type as string) ?? 'unknown',
-          description: message ?? 'Agent requires approval.',
-        });
+        const hitlType = (packet.hitl_type as string) ?? 'unknown';
+        const sessionId = (useUiStore.getState() as any).vantageSessionId;
+
+        if (isAlwaysAllowed(hitlType) && sessionId) {
+          // Auto-approve — user previously clicked "Always Allow" for this type
+          resolveHITL(sessionId, true).catch(() => {});
+          useCoreStore.getState().appendAgentHistory(1, 'assistant', [
+            `⚡ Auto-approved \`${hitlType}\` (Always Allow active).`,
+          ]);
+        } else {
+          ui.setVantageHitl({
+            type: hitlType,
+            description: message ?? 'Agent requires approval.',
+          });
+        }
       }
 
       // ── Pipeline complete ────────────────────────────────────────────────

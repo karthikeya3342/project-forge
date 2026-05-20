@@ -1,11 +1,13 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, ShieldCheck } from 'lucide-react';
 import { useUiStore } from '../integration/store/uiStore';
 import { resolveHITL } from '../integration/vantageApi';
+import { addAlwaysAllowed } from '../integration/vantageAlwaysAllow';
 
 const HITL_TITLES: Record<string, string> = {
   file_overwrite: 'Critical File Overwrite Detected',
   vulnerability_found: 'AST Vulnerability Flagged',
+  dangerous_command: 'Destructive Command Detected',
   unknown: 'Human Approval Required',
 };
 
@@ -23,6 +25,12 @@ export const VantageHITLOverlay: React.FC = () => {
 
   const handleReject = async () => {
     if (vantageSessionId) await resolveHITL(vantageSessionId, false);
+    setVantageHitl(null);
+  };
+
+  const handleAlwaysAllow = async () => {
+    addAlwaysAllowed(vantageHitl.type);
+    if (vantageSessionId) await resolveHITL(vantageSessionId, true);
     setVantageHitl(null);
   };
 
@@ -48,20 +56,28 @@ export const VantageHITLOverlay: React.FC = () => {
         </div>
 
         {/* Actions */}
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             onClick={handleApprove}
             className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-95"
           >
             <CheckCircle2 size={14} />
-            Approve &amp; Continue
+            Approve
+          </button>
+          <button
+            onClick={handleAlwaysAllow}
+            className="flex-1 flex items-center justify-center gap-2 py-3 bg-cyan-700 hover:bg-cyan-600 text-white rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-95"
+            title={`Always approve "${vantageHitl.type}" without asking`}
+          >
+            <ShieldCheck size={14} />
+            Always Allow
           </button>
           <button
             onClick={handleReject}
             className="flex-1 flex items-center justify-center gap-2 py-3 bg-red-700 hover:bg-red-600 text-white rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-95"
           >
             <XCircle size={14} />
-            Reject &amp; Halt
+            Reject
           </button>
         </div>
       </div>

@@ -7,6 +7,8 @@ import {
   ChevronRight,
   Send,
   AlertCircle,
+  ShieldCheck,
+  XCircle,
 } from 'lucide-react';
 import { useVantageStore } from '../../integration/store/vantageStore';
 import { useUiStore } from '../../integration/store/uiStore';
@@ -14,6 +16,7 @@ import { useCoreStore } from '../../integration/store/coreStore';
 import { startVantagePipeline } from '../../integration/vantageApi';
 import { connectVantageWs } from '../../integration/vantageWs';
 import { resolveHITL } from '../../integration/vantageApi';
+import { addAlwaysAllowed } from '../../integration/vantageAlwaysAllow';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -127,6 +130,12 @@ export const VantageTelemetryPanel: React.FC = () => {
     setVantageHitl(null);
   };
 
+  const handleAlwaysAllow = async () => {
+    if (vantageHitl) addAlwaysAllowed(vantageHitl.type);
+    if (vantageSessionId) await resolveHITL(vantageSessionId, true);
+    setVantageHitl(null);
+  };
+
   const depEntries = Object.entries(dependencyMap).slice(0, 8);
 
   return (
@@ -194,17 +203,27 @@ export const VantageTelemetryPanel: React.FC = () => {
             <p className="text-[10px] text-zinc-600 leading-relaxed mb-3">
               {vantageHitl.description}
             </p>
-            <div className="flex gap-2">
+            <div className="flex gap-1.5">
               <button
                 onClick={handleApprove}
-                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
+                className="flex-1 flex items-center justify-center gap-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
               >
+                <CheckCircle2 size={11} />
                 Approve
               </button>
               <button
-                onClick={handleReject}
-                className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
+                onClick={handleAlwaysAllow}
+                className="flex-1 flex items-center justify-center gap-1 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
+                title="Approve and never ask again for this type"
               >
+                <ShieldCheck size={11} />
+                Always
+              </button>
+              <button
+                onClick={handleReject}
+                className="flex-1 flex items-center justify-center gap-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
+              >
+                <XCircle size={11} />
                 Reject
               </button>
             </div>
