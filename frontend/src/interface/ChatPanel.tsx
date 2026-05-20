@@ -11,6 +11,8 @@ import { useSceneManager } from '../simulation/SceneContext';
 import { Avatar } from './components/Avatar';
 import { AuditModal } from './AuditModal';
 import { FileSearch } from 'lucide-react';
+import { startVantagePipeline } from '../integration/vantageApi';
+import { connectVantageWs } from '../integration/vantageWs';
 
 const ChatPanel: React.FC = () => {
   const {
@@ -95,6 +97,41 @@ const ChatPanel: React.FC = () => {
 
     const text = input;
     setInput('');
+
+    // ── VANTAGE: route to backend instead of local LLM ──────────────────
+    if (activeTeam.id === 'vantage') {
+      const { llmConfig, setVantageSessionId } = useUiStore.getState() as any;
+      const core = useCoreStore.getState();
+
+      core.appendAgentHistory(1, 'user', [text]);
+      core.startProject(text);
+
+      if (!llmConfig?.apiKey) {
+        core.appendAgentHistory(1, 'assistant', ['⚠️ No API key set. Click the key icon in the top-right corner to configure VANTAGE.']);
+        return;
+      }
+      if (!llmConfig?.workspacePath) {
+        core.appendAgentHistory(1, 'assistant', ['⚠️ No workspace path set. Click the key icon in the top-right corner to set your workspace directory.']);
+        return;
+      }
+
+      core.appendAgentHistory(1, 'assistant', ['Initializing VANTAGE pipeline... Connecting to backend.']);
+      connectVantageWs();
+
+      const result = await startVantagePipeline(text, llmConfig.workspacePath, llmConfig.apiKey);
+      if ('session_id' in result) {
+        setVantageSessionId(result.session_id);
+        core.appendAgentHistory(1, 'assistant', [
+          `Pipeline started (session: \`${result.session_id.slice(0, 8)}...\`)\n\nAgents are now active. Watch the 3D scene for live status.\n\n**Pipeline:** CodePlan → Parsel → SWE-Agent → AutoCodeRover`
+        ]);
+      } else {
+        core.appendAgentHistory(1, 'assistant', [`❌ Backend error: ${(result as any).error}\n\nEnsure the VANTAGE backend is running at \`localhost:8000\`.`]);
+        core.setPhase('idle');
+      }
+      return;
+    }
+
+    // ── Delegation: original local LLM flow ─────────────────────────────
     await scene?.sendMessage(text);
   };
 

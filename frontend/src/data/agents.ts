@@ -5,7 +5,7 @@ export const USER_ID = 'user';
 export const USER_NAME = 'User';
 export const MAX_AGENTS = 5;
 export { USER_COLOR };
-export const DEFAULT_AGENTIC_SET_ID = 'single-agent';
+export const DEFAULT_AGENTIC_SET_ID = 'vantage';
 export interface AgentNode {
   id: string;
   index: number;
@@ -37,6 +37,71 @@ export interface AgenticSystem {
 }
 
 export const AGENTIC_SETS: AgenticSystem[] = [
+  // ── VANTAGE — default system ───────────────────────────────────────────
+  {
+    id: 'vantage',
+    teamName: 'VANTAGE',
+    teamType: 'Engineering',
+    teamDescription: 'Verifiable Agentic Network for Three-dimensional Analysis and Guided Execution. Runs on the local VANTAGE backend.',
+    color: '#22d3ee',
+    outputType: 'text',
+    outputModel: 'gemma4-31b-it',
+    outputAutoApprove: false,
+    user: { index: 0, model: 'Human', position: { x: 0, y: 0 } },
+    leadAgent: {
+      id: 'vantage-orchestrator',
+      index: 1,
+      name: 'Orchestrator',
+      description: 'Central control system. Routes tasks between CodePlan, Parsel, SWE-Agent and AutoCodeRover via LangGraph.',
+      color: '#facc15',
+      model: 'gemma4-26B-it',
+      humanInTheLoop: false,
+      position: { x: 0, y: 130 },
+      subagents: [
+        {
+          id: 'vantage-codeplan',
+          index: 2,
+          name: 'CodePlan',
+          description: 'Scans workspace, maps file dependencies, generates ordered execution plan.',
+          color: '#22d3ee',
+          model: 'gemma4-26B-it',
+          humanInTheLoop: false,
+          position: { x: -450, y: 280 },
+        },
+        {
+          id: 'vantage-parsel',
+          index: 3,
+          name: 'Parsel',
+          description: 'Decomposes complex tasks into isolated helper functions. Base cases first.',
+          color: '#a78bfa',
+          model: 'gemma4-31b-it',
+          humanInTheLoop: false,
+          position: { x: -150, y: 280 },
+        },
+        {
+          id: 'vantage-swe-agent',
+          index: 4,
+          name: 'SWE-Agent',
+          description: 'Autonomous code writer. Executes inside Docker /workspace sandbox only.',
+          color: '#fb923c',
+          model: 'gemma4-31b-it',
+          humanInTheLoop: true,
+          position: { x: 150, y: 280 },
+        },
+        {
+          id: 'vantage-autocoderover',
+          index: 5,
+          name: 'AutoCodeRover',
+          description: 'AST auditor. Detects infinite loops, unbounded recursion, resource leaks before accepting changes.',
+          color: '#f472b6',
+          model: 'gemma4-26B-it',
+          humanInTheLoop: true,
+          position: { x: 450, y: 280 },
+        },
+      ],
+    },
+  },
+  // ── Original delegation teams (kept for reference) ─────────────────────
   {
     id: 'unboring-net',
     teamName: 'unboring.net',

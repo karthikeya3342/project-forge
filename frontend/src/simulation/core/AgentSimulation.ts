@@ -66,6 +66,9 @@ export class AgentSimulation {
 
   /** Central method to check for and start available tasks. */
   public processScheduledTasks() {
+    // VANTAGE: tasks are display-only — do not execute via local LLM
+    if (this.system.id === 'vantage') return;
+
     const state = useCoreStore.getState();
     if (state.phase !== 'working') return;
 
@@ -82,6 +85,9 @@ export class AgentSimulation {
   }
 
   private async triggerAutonomousStrategy() {
+    // VANTAGE backend drives this — no local LLM spark needed
+    if (this.system.id === 'vantage') return;
+
     const lead = this.getAgent(1);
     const ui = useUiStore.getState();
     const core = useCoreStore.getState();

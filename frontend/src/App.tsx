@@ -13,7 +13,6 @@ import { KanbanPanel } from './interface/KanbanPanel';
 import { OutputReviewModal } from './interface/OutputReviewModal';
 import SimulationView from './interface/SimulationView';
 import { VantageHITLOverlay } from './interface/VantageHITLOverlay';
-import { VantageLaunchPanel } from './interface/VantageLaunchPanel';
 import { VisualConfigurator } from './interface/VisualConfigurator/VisualConfigurator';
 import { SceneContext } from './simulation/SceneContext';
 import { SceneManager } from './simulation/SceneManager';
@@ -130,7 +129,6 @@ const App: React.FC = () => {
         <OutputReviewModal />
 
         {/* VANTAGE overlays */}
-        <VantageLaunchPanel />
         <VantageHITLOverlay />
       </div>
     </SceneContext.Provider>

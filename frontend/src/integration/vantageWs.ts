@@ -1,13 +1,17 @@
 /**
  * VANTAGE WebSocket bridge.
- * Receives backend telemetry and drives the-delegation's existing
- * agent state system (agentStatuses + actionLog) to animate 3D characters.
+ *
+ * Receives backend telemetry and drives:
+ * 1. agentStatuses (animates 3D characters)
+ * 2. coreStore tasks (populates Kanban with pipeline steps)
+ * 3. coreStore phase (working → done/error)
+ * 4. vantageHitl (triggers HITL approval overlay)
  */
 import { useUiStore } from './store/uiStore';
 import { useCoreStore } from './store/coreStore';
 import type { AgentState } from '../types';
 
-// Map VANTAGE backend agent names to 3D character indices in the simulation
+// Backend agent name → 3D character index
 const AGENT_INDEX: Record<string, number> = {
   orchestrator:   1,
   codeplan:       2,
@@ -16,7 +20,18 @@ const AGENT_INDEX: Record<string, number> = {
   autocoderover:  5,
 };
 
-// Map VANTAGE states to delegation AgentState
+// Backend agent name → display label
+const AGENT_LABEL: Record<string, string> = {
+  orchestrator:   'Orchestrator',
+  codeplan:       'CodePlan',
+  parsel:         'Parsel',
+  swe_agent:      'SWE-Agent',
+  autocoderover:  'AutoCodeRover',
+};
+
+// Active task IDs per agent (so we can update them)
+const activeTaskIds: Record<string, string> = {};
+
 const STATE_MAP: Record<string, AgentState> = {
   idle:             'idle',
   working:          'working',
@@ -46,40 +61,91 @@ export function connectVantageWs() {
         hitl_type?: string;
       };
 
-      const ui = useUiStore.getState();
+      const ui = useUiStore.getState() as any;
       const core = useCoreStore.getState();
+      const agentName = packet.agent ?? '';
+      const agentIdx = AGENT_INDEX[agentName];
+      const label = AGENT_LABEL[agentName] ?? agentName;
 
-      // Drive 3D character animation state
-      if (packet.agent && AGENT_INDEX[packet.agent] !== undefined) {
-        const idx = AGENT_INDEX[packet.agent];
-        const agentState = STATE_MAP[packet.state ?? 'idle'] ?? 'idle';
-        ui.setAgentStatus(idx, agentState);
+      // 1. Drive 3D character animation
+      if (agentIdx !== undefined) {
+        ui.setAgentStatus(agentIdx, STATE_MAP[packet.state ?? 'idle'] ?? 'idle');
       }
 
-      // Push to action log (appears in ActionLogPanel)
-      if (packet.message && packet.agent) {
+      // 2. Append to action log
+      if (packet.message && agentName) {
         core.addLogEntry({
-          agentIndex: AGENT_INDEX[packet.agent] ?? 0,
+          agentIndex: agentIdx ?? 0,
           action: `[${packet.state?.toUpperCase()}] ${packet.message}`,
         });
       }
 
-      // HITL checkpoint
-      if (
-        packet.type === 'hitl_required' ||
-        packet.state === 'waiting_approval'
-      ) {
+      // 3. Drive Kanban tasks per agent
+      if (agentIdx !== undefined && packet.state) {
+        switch (packet.state) {
+          case 'working': {
+            // Create task for this agent if not already running
+            if (!activeTaskIds[agentName]) {
+              const task = core.addTask({
+                title: `${label}: ${packet.message?.slice(0, 60) ?? 'Working...'}`,
+                description: packet.message ?? '',
+                assignedAgentId: agentIdx,
+                status: 'in_progress',
+                requiresUserApproval: false,
+              });
+              activeTaskIds[agentName] = task.id;
+            }
+            break;
+          }
+          case 'complete': {
+            const taskId = activeTaskIds[agentName];
+            if (taskId) {
+              core.setTaskOutput(taskId, packet.message ?? 'Done.');
+              core.approveTask(taskId);
+              delete activeTaskIds[agentName];
+            }
+            break;
+          }
+          case 'error': {
+            const taskId = activeTaskIds[agentName];
+            if (taskId) {
+              core.updateTaskStatus(taskId, 'on_hold');
+            }
+            break;
+          }
+          case 'waiting_approval': {
+            const taskId = activeTaskIds[agentName];
+            if (taskId) {
+              core.submitTaskForReview(taskId, packet.message ?? 'Approval required.');
+            }
+            break;
+          }
+        }
+      }
+
+      // 4. Handle HITL pause
+      if (packet.type === 'hitl_required' || packet.state === 'waiting_approval') {
         ui.setVantageHitl({
           type: packet.hitl_type ?? 'unknown',
           description: packet.message ?? 'Agent requires approval.',
         });
       }
 
-      // Pipeline complete
+      // 5. Pipeline complete
       if (packet.type === 'pipeline_done') {
-        Object.values(AGENT_INDEX).forEach((idx) => {
-          ui.setAgentStatus(idx, 'idle');
-        });
+        Object.keys(activeTaskIds).forEach((name) => delete activeTaskIds[name]);
+        Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
+        core.setPhase('done');
+        core.appendAgentHistory(1, 'assistant', [
+          '✅ **VANTAGE pipeline complete.** All agents have finished.\n\nCheck your workspace directory for the generated files.'
+        ]);
+      }
+
+      // 6. Pipeline error
+      if (packet.type === 'pipeline_error') {
+        Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
+        core.setPhase('idle');
+        core.appendAgentHistory(1, 'assistant', [`❌ Pipeline error: ${packet.message}`]);
       }
 
     } catch {
