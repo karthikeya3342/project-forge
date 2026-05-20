@@ -1,40 +1,141 @@
-import React, { useEffect } from "react";
-import { useStore } from "./store";
-import ConfigScreen from "./components/ConfigScreen";
-import HITLModal from "./components/HITLModal";
-import PromptBar from "./components/PromptBar";
-import TelemetryLog from "./components/TelemetryLog";
-import VantageScene from "./scene/VantageScene";
-import { connectWebSocket } from "./ws/client";
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-export default function App() {
-  const configured = useStore((s) => s.configured);
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCoreStore } from './integration/store/coreStore';
+import { ActionLogPanel } from './interface/ActionLogPanel';
+import { FinalOutputModal } from './interface/FinalOutputModal';
+import Header from './interface/Header';
+import InspectorPanel from './interface/InspectorPanel';
+import { KanbanPanel } from './interface/KanbanPanel';
+import { OutputReviewModal } from './interface/OutputReviewModal';
+import SimulationView from './interface/SimulationView';
+import { VantageHITLOverlay } from './interface/VantageHITLOverlay';
+import { VantageLaunchPanel } from './interface/VantageLaunchPanel';
+import { VisualConfigurator } from './interface/VisualConfigurator/VisualConfigurator';
+import { SceneContext } from './simulation/SceneContext';
+import { SceneManager } from './simulation/SceneManager';
+
+
+const App: React.FC = () => {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const managerRef = useRef<SceneManager | null>(null);
+  const [sceneManager, setSceneManager] = useState<SceneManager | null>(null);
+  const { isLogOpen, isKanbanOpen, setIsResizing, viewMode, setViewMode } = useCoreStore();
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [kanbanHeight, setKanbanHeight] = useState(220);
+
+  const startResizing = useCallback(() => {
+    setIsResizing(true);
+  }, [setIsResizing]);
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+  }, [setIsResizing]);
+
+  const resize = useCallback((e: MouseEvent) => {
+    if (useCoreStore.getState().isResizing) {
+      const windowHeight = window.innerHeight;
+      const newHeight = windowHeight - e.clientY;
+      const minHeight = windowHeight * 0.2;
+      const maxHeight = windowHeight * 0.5;
+      if (newHeight >= minHeight && newHeight <= maxHeight) {
+        setKanbanHeight(newHeight);
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    if (configured) connectWebSocket();
-  }, [configured]);
+    window.addEventListener('mousemove', resize);
+    window.addEventListener('mouseup', stopResizing);
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [resize, stopResizing]);
 
-  if (!configured) return <ConfigScreen />;
+  useEffect(() => {
+    if (canvasRef.current && !managerRef.current) {
+      const manager = new SceneManager(canvasRef.current);
+      managerRef.current = manager;
+      setSceneManager(manager);
+    }
+
+    return () => {
+      if (managerRef.current) {
+        managerRef.current.dispose();
+        managerRef.current = null;
+        setSceneManager(null);
+      }
+    };
+  }, []);
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: "#020409", position: "relative" }}>
-      {/* 3D Scene — full viewport */}
-      <VantageScene />
+    <SceneContext.Provider value={sceneManager}>
+      <div className="w-screen h-screen bg-white overflow-hidden flex flex-col">
+        {/* Top: Header */}
+        {!isFullscreen && <Header />}
 
-      {/* HUD overlays */}
-      <TelemetryLog />
-      <PromptBar />
-      <HITLModal />
+        <div className="flex-1 flex flex-row min-h-0 min-w-0 overflow-hidden">
+          {/* Left: Log panel */}
+          {isLogOpen && !isFullscreen && viewMode !== 'design' && <ActionLogPanel />}
 
-      {/* VANTAGE wordmark */}
-      <div style={{
-        position: "fixed", top: 20, left: 24,
-        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-        fontSize: 13, fontWeight: 700, letterSpacing: "0.2em",
-        color: "#22d3ee", zIndex: 100,
-      }}>
-        VANTAGE
+          {/* Center: canvas + kanban drawer stacked */}
+          <div className="relative flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-zinc-50">
+
+            {/* Simulation Context - Persistently Mounted */}
+            <div
+              className="flex-1 flex flex-col min-w-0 min-h-0"
+              style={{ visibility: viewMode === 'design' ? 'hidden' : 'visible' }}
+            >
+              <SimulationView canvasRef={canvasRef} isFullscreen={isFullscreen} setIsFullscreen={setIsFullscreen} />
+
+              {/* Resize Bar */}
+              {isKanbanOpen && !isFullscreen && (
+                <div
+                  className={`h-2 hover:h-2 bg-transparent hover:bg-zinc-200 border-t border-black/5 transition-colors cursor-row-resize z-30 flex items-center justify-center group shrink-0 ${useCoreStore.getState().isResizing ? 'bg-zinc-300' : ''}`}
+                  onMouseDown={startResizing}
+                >
+                  <div className="w-12 h-1 bg-zinc-300 rounded-full group-hover:bg-zinc-400" />
+                </div>
+              )}
+
+              {isKanbanOpen && !isFullscreen && <KanbanPanel height={kanbanHeight} />}
+            </div>
+          </div>
+
+          {/* Right: Inspector sidebar */}
+          {!isFullscreen && viewMode !== 'design' && <InspectorPanel />}
+        </div>
+
+        {/* Design Mode Overlay (Modal) */}
+        {viewMode === 'design' && (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center p-3 md:p-6 bg-white/40 backdrop-blur-xl"
+          >
+            <div
+              className="w-full h-full bg-white rounded-2xl shadow-2xl border border-zinc-200/50 overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <VisualConfigurator />
+            </div>
+          </div>
+        )}
+
+        {/* Final output — fixed viewport overlay */}
+        <FinalOutputModal />
+        <OutputReviewModal />
+
+        {/* VANTAGE overlays */}
+        <VantageLaunchPanel />
+        <VantageHITLOverlay />
       </div>
-    </div>
+    </SceneContext.Provider>
   );
-}
+};
+
+export default App;
+

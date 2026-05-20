@@ -1,0 +1,29 @@
+/** REST client for VANTAGE backend at localhost:8000 */
+
+export async function startVantagePipeline(
+  prompt: string,
+  workspacePath: string,
+  apiKey: string
+): Promise<{ session_id: string } | { error: string }> {
+  const res = await fetch('/api/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      workspace_path: workspacePath,
+      google_api_key: apiKey,
+    }),
+  });
+  return res.json();
+}
+
+export async function resolveHITL(
+  sessionId: string,
+  approved: boolean
+): Promise<void> {
+  await fetch('/api/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, approved }),
+  });
+}
