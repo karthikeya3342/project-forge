@@ -46,7 +46,7 @@ function NodeIcon({ status }: { status: NodeStatus }) {
 
 export const VantageTelemetryPanel: React.FC = () => {
   const { currentNode, dependencyMap, wsLog, streamingText, streamingAgent } = useVantageStore();
-  const { vantageHitl, setVantageHitl, vantageSessionId, llmConfig, setVantageSessionId } =
+  const { vantageHitl, setVantageHitl, vantageSessionId, llmConfig, setVantageSessionId, setIsTyping } =
     useUiStore() as any;
   const core = useCoreStore();
 
@@ -118,6 +118,7 @@ export const VantageTelemetryPanel: React.FC = () => {
       core.setPhase('idle');
     }
     setSending(false);
+    setIsTyping(false);
   };
 
   const handleApprove = async () => {
@@ -277,20 +278,20 @@ export const VantageTelemetryPanel: React.FC = () => {
                     className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[90%] rounded-xl px-2.5 py-1.5 text-[10px] leading-relaxed ${
+                      className={`max-w-[90%] min-w-0 overflow-hidden rounded-xl px-2.5 py-1.5 text-[10px] leading-relaxed ${
                         msg.role === 'user'
                           ? 'bg-cyan-50 text-cyan-800 rounded-tr-none'
                           : 'bg-zinc-100 text-zinc-700 rounded-tl-none'
                       }`}
                     >
                       {msg.role === 'assistant' ? (
-                        <div className="markdown-vantage prose prose-zinc prose-xs max-w-none">
+                        <div className="markdown-vantage prose prose-zinc prose-xs max-w-none overflow-x-hidden [&_pre]:overflow-x-auto [&_pre]:text-[9px] [&_pre]:whitespace-pre-wrap [&_code]:break-words [&_p]:break-words [&_li]:break-words">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {msg.content}
                           </ReactMarkdown>
                         </div>
                       ) : (
-                        <span className="whitespace-pre-wrap">{msg.content}</span>
+                        <span className="whitespace-pre-wrap break-words">{msg.content}</span>
                       )}
                     </div>
                   </div>
@@ -324,7 +325,8 @@ export const VantageTelemetryPanel: React.FC = () => {
         <div className="flex items-end gap-1.5">
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { setInput(e.target.value); setIsTyping(!!e.target.value.trim()); }}
+            onBlur={() => setIsTyping(false)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();

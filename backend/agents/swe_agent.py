@@ -130,7 +130,8 @@ IMPORTANT: paths must be relative, no leading slash."""
             }
 
     # ── Write files ────────────────────────────────────────────────────────
-    runner = DockerRunner(state["workspace_path"])
+    work_dir = state.get("project_dir") or state["workspace_path"]
+    runner = DockerRunner(work_dir)
     for file_spec in result.get("files", []):
         runner.write_file(file_spec["path"], file_spec["content"])
         _broadcast_ws({
@@ -141,7 +142,7 @@ IMPORTANT: paths must be relative, no leading slash."""
 
     _broadcast_ws({
         "type": "file_tree",
-        "tree": _build_tree(state["workspace_path"], state["workspace_path"]),
+        "tree": _build_tree(work_dir, work_dir),
     })
 
     # ── Run commands ───────────────────────────────────────────────────────

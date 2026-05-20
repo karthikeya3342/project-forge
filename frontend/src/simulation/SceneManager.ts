@@ -173,6 +173,19 @@ export class SceneManager {
         }
       }
 
+      // VANTAGE: user typing → walk toward orchestrator desk, release on send/blur
+      if (s.isTyping !== prev.isTyping && this.controller) {
+        const activeSet = getActiveAgentSet();
+        if (activeSet.id === 'vantage') {
+          const user = activeSet.user.index;
+          if (s.isTyping) {
+            this.moveNpcToBoardroom(user);
+          } else {
+            this.moveNpcToSpawn(user);
+          }
+        }
+      }
+
       // Monitor individual agent status changes for autonomous animations
       if (s.agentStatuses !== prev.agentStatuses && this.controller) {
         Object.keys(s.agentStatuses).forEach(key => {

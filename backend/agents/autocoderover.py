@@ -66,6 +66,8 @@ class ASTAuditor(ast.NodeVisitor):
 
 
 def audit_file(content: str, filename: str) -> list[str]:
+    if not filename.endswith('.py'):
+        return []
     try:
         tree = ast.parse(content)
         auditor = ASTAuditor()
@@ -83,7 +85,7 @@ def run_autocoderover(state: VantageState) -> dict:
         all_issues.extend(issues)
 
     try:
-        workspace = Path(state["workspace_path"])
+        workspace = Path(state.get("project_dir") or state["workspace_path"])
         for py_file in workspace.rglob("*.py"):
             try:
                 content = py_file.read_text(encoding="utf-8", errors="ignore")
