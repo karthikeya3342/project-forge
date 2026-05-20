@@ -46,7 +46,7 @@ function NodeIcon({ status }: { status: NodeStatus }) {
 
 export const VantageTelemetryPanel: React.FC = () => {
   const { currentNode, dependencyMap, wsLog, streamingText, streamingAgent } = useVantageStore();
-  const { vantageHitl, setVantageHitl, vantageSessionId, llmConfig, setVantageSessionId, setIsTyping } =
+  const { vantageHitl, setVantageHitl, vantageSessionId, llmConfig, setVantageSessionId, setIsTyping, setChatting, setSelectedNpc } =
     useUiStore() as any;
   const core = useCoreStore();
 
@@ -118,6 +118,7 @@ export const VantageTelemetryPanel: React.FC = () => {
       core.setPhase('idle');
     }
     setSending(false);
+    setChatting(false);
     setIsTyping(false);
   };
 
@@ -325,8 +326,18 @@ export const VantageTelemetryPanel: React.FC = () => {
         <div className="flex items-end gap-1.5">
           <textarea
             value={input}
-            onChange={(e) => { setInput(e.target.value); setIsTyping(!!e.target.value.trim()); }}
-            onBlur={() => setIsTyping(false)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (e.target.value.trim()) {
+                setSelectedNpc(1);
+                setChatting(true);
+                setIsTyping(true);
+              } else {
+                setChatting(false);
+                setIsTyping(false);
+              }
+            }}
+            onBlur={() => { setChatting(false); setIsTyping(false); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
