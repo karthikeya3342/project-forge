@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - vantage_db:/app/data
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - WORKSPACE_PATH=${WORKSPACE_PATH}
+    restart: unless-stopped
+
+volumes:
+  vantage_db:
