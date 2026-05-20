@@ -35,17 +35,17 @@ const FileTreeNode: React.FC<NodeProps> = ({ node, depth }) => {
     return (
       <div>
         <button
-          className="w-full flex items-center gap-1 px-2 py-0.5 rounded hover:bg-zinc-800 transition-colors text-left"
+          className="w-full flex items-center gap-1 px-2 py-0.5 rounded hover:bg-zinc-100 transition-colors text-left"
           style={{ paddingLeft: `${8 + depth * 12}px` }}
           onClick={() => setOpen((o) => !o)}
         >
-          <span className="text-zinc-500 shrink-0">
+          <span className="text-zinc-400 shrink-0">
             {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </span>
-          <span className="text-zinc-400 shrink-0">
+          <span className="text-zinc-500 shrink-0">
             {open ? <FolderOpen size={13} /> : <Folder size={13} />}
           </span>
-          <span className="text-zinc-300 text-[11px] font-medium truncate ml-0.5">
+          <span className="text-zinc-700 text-[11px] font-medium truncate ml-0.5">
             {node.name}
           </span>
         </button>
@@ -60,8 +60,8 @@ const FileTreeNode: React.FC<NodeProps> = ({ node, depth }) => {
     <button
       className={`w-full flex items-center gap-1.5 px-2 py-0.5 rounded transition-colors text-left group ${
         isSelected
-          ? 'bg-cyan-900/40 border border-cyan-700/40'
-          : 'hover:bg-zinc-800 border border-transparent'
+          ? 'bg-cyan-50 border border-cyan-300'
+          : 'hover:bg-zinc-100 border border-transparent'
       }`}
       style={{ paddingLeft: `${8 + depth * 12}px` }}
       onClick={() => {
@@ -76,7 +76,7 @@ const FileTreeNode: React.FC<NodeProps> = ({ node, depth }) => {
       )}
       <span
         className={`text-[11px] truncate ${
-          isModifying ? 'text-cyan-300' : isSelected ? 'text-cyan-200' : 'text-zinc-300 group-hover:text-zinc-100'
+          isModifying ? 'text-cyan-300' : isSelected ? 'text-cyan-700' : 'text-zinc-700 group-hover:text-zinc-900'
         }`}
       >
         {node.name}
@@ -94,10 +94,10 @@ export const VantageFileExplorer: React.FC = () => {
   const { fileTree } = useVantageStore();
 
   return (
-    <div className="w-56 h-full bg-zinc-950 border-r border-zinc-800/60 flex flex-col overflow-hidden shrink-0">
+    <div className="w-56 h-full bg-white border-r border-zinc-200 flex flex-col overflow-hidden shrink-0">
       {/* Header */}
-      <div className="h-9 flex items-center px-3 border-b border-zinc-800/60 shrink-0">
-        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">
+      <div className="h-9 flex items-center px-3 border-b border-zinc-200 shrink-0">
+        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400">
           Workspace
         </span>
       </div>
@@ -106,8 +106,8 @@ export const VantageFileExplorer: React.FC = () => {
       <div className="flex-1 overflow-y-auto py-1 [scrollbar-width:none]">
         {fileTree.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 px-4">
-            <Folder size={20} className="text-zinc-700" />
-            <p className="text-[10px] text-zinc-600 text-center leading-relaxed">
+            <Folder size={20} className="text-zinc-400" />
+            <p className="text-[10px] text-zinc-500 text-center leading-relaxed">
               No files yet.<br />Start a task to see workspace.
             </p>
           </div>

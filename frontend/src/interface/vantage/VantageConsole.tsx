@@ -48,21 +48,21 @@ export const VantageConsole: React.FC = () => {
   }, [terminalLog]);
 
   return (
-    <div className="h-44 flex flex-col border-t border-zinc-800/60 bg-zinc-950 shrink-0">
+    <div className="h-44 flex flex-col border-t border-zinc-200 bg-white shrink-0">
       {/* Tabs */}
-      <div className="h-8 flex items-center border-b border-zinc-800/60 shrink-0 px-1 gap-0.5">
+      <div className="h-8 flex items-center border-b border-zinc-200 shrink-0 px-1 gap-0.5">
         <button
           onClick={() => setConsoleTab('events')}
           className={`flex items-center gap-1.5 px-3 h-full text-[10px] font-black uppercase tracking-widest transition-colors ${
             consoleTab === 'events'
               ? 'text-cyan-400 border-b-2 border-cyan-500'
-              : 'text-zinc-600 hover:text-zinc-400'
+              : 'text-zinc-400 hover:text-zinc-600'
           }`}
         >
           <Radio size={10} />
           WS Events
           {wsLog.length > 0 && (
-            <span className="bg-zinc-800 text-zinc-400 px-1 rounded text-[9px]">
+            <span className="bg-zinc-100 text-zinc-500 px-1 rounded text-[9px]">
               {wsLog.length}
             </span>
           )}
@@ -72,13 +72,13 @@ export const VantageConsole: React.FC = () => {
           className={`flex items-center gap-1.5 px-3 h-full text-[10px] font-black uppercase tracking-widest transition-colors ${
             consoleTab === 'terminal'
               ? 'text-green-400 border-b-2 border-green-500'
-              : 'text-zinc-600 hover:text-zinc-400'
+              : 'text-zinc-400 hover:text-zinc-600'
           }`}
         >
           <Terminal size={10} />
           Terminal
           {terminalLog.length > 0 && (
-            <span className="bg-zinc-800 text-zinc-400 px-1 rounded text-[9px]">
+            <span className="bg-zinc-100 text-zinc-500 px-1 rounded text-[9px]">
               {terminalLog.length}
             </span>
           )}
@@ -86,20 +86,20 @@ export const VantageConsole: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.700)_transparent]">
+      <div className="flex-1 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.300)_transparent]">
         {consoleTab === 'events' ? (
           <div className="py-1 font-mono">
             {wsLog.length === 0 ? (
-              <p className="text-[10px] text-zinc-700 px-3 py-2">No events yet.</p>
+              <p className="text-[10px] text-zinc-400 px-3 py-2">No events yet.</p>
             ) : (
               wsLog.map((entry, i) => {
                 const { label, color } = packetSummary(entry.raw);
                 return (
                   <div
                     key={i}
-                    className="flex items-start gap-2 px-3 py-0.5 hover:bg-zinc-900 text-[10px]"
+                    className="flex items-start gap-2 px-3 py-0.5 hover:bg-zinc-50 text-[10px]"
                   >
-                    <span className="text-zinc-600 shrink-0 tabular-nums">
+                    <span className="text-zinc-400 shrink-0 tabular-nums">
                       {fmtTime(entry.ts)}
                     </span>
                     <span style={{ color }} className="truncate">
@@ -114,11 +114,11 @@ export const VantageConsole: React.FC = () => {
         ) : (
           <div className="py-1 font-mono">
             {terminalLog.length === 0 ? (
-              <p className="text-[10px] text-zinc-700 px-3 py-2">No terminal output yet.</p>
+              <p className="text-[10px] text-zinc-400 px-3 py-2">No terminal output yet.</p>
             ) : (
               terminalLog.map((entry, i) => (
                 <div key={i} className="px-3 py-0.5">
-                  <span className="text-zinc-600 text-[9px] mr-2">
+                  <span className="text-zinc-400 text-[9px] mr-2">
                     {fmtTime(entry.ts)}
                   </span>
                   <span className="text-green-400 text-[10px] whitespace-pre-wrap">

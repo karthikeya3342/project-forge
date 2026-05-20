@@ -16,7 +16,7 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
   const { mainView, setMainView } = useVantageStore();
 
   return (
-    <div className="w-screen h-screen bg-zinc-950 flex flex-col overflow-hidden">
+    <div className="w-screen h-screen bg-white flex flex-col overflow-hidden">
       {/* Header */}
       <Header />
 
@@ -28,13 +28,13 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
         {/* Center: canvas / code + console */}
         <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
           {/* View toggle bar */}
-          <div className="h-9 flex items-center gap-1 px-3 border-b border-zinc-800/60 bg-zinc-900 shrink-0">
+          <div className="h-9 flex items-center gap-1 px-3 border-b border-zinc-200 bg-white shrink-0">
             <button
               onClick={() => setMainView('3d')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                 mainView === '3d'
-                  ? 'bg-zinc-700 text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+                  ? 'bg-zinc-100 text-zinc-900'
+                  : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'
               }`}
             >
               <Box size={11} />
@@ -44,8 +44,8 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
               onClick={() => setMainView('code')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                 mainView === 'code'
-                  ? 'bg-zinc-700 text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+                  ? 'bg-zinc-100 text-zinc-900'
+                  : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'
               }`}
             >
               <Cpu size={11} />

@@ -37,7 +37,7 @@ function NodeIcon({ status }: { status: NodeStatus }) {
     case 'waiting':
       return <AlertTriangle size={13} className="text-amber-400" />;
     default:
-      return <Circle size={13} className="text-zinc-700" />;
+      return <Circle size={13} className="text-zinc-400" />;
   }
 }
 
@@ -130,10 +130,10 @@ export const VantageTelemetryPanel: React.FC = () => {
   const depEntries = Object.entries(dependencyMap).slice(0, 8);
 
   return (
-    <div className="w-72 h-full bg-zinc-950 border-l border-zinc-800/60 flex flex-col overflow-hidden shrink-0">
+    <div className="w-72 h-full bg-white border-l border-zinc-200 flex flex-col overflow-hidden shrink-0">
       {/* Header */}
-      <div className="h-9 flex items-center justify-between px-3 border-b border-zinc-800/60 shrink-0">
-        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">
+      <div className="h-9 flex items-center justify-between px-3 border-b border-zinc-200 shrink-0">
+        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400">
           Telemetry
         </span>
         {currentNode && (
@@ -143,10 +143,10 @@ export const VantageTelemetryPanel: React.FC = () => {
         )}
       </div>
 
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.800)_transparent]">
+      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.300)_transparent]">
         {/* Pipeline */}
-        <div className="px-3 py-2 border-b border-zinc-800/60">
-          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-600 mb-2">
+        <div className="px-3 py-2 border-b border-zinc-200">
+          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-2">
             Pipeline
           </p>
           <div className="flex flex-col gap-1">
@@ -159,22 +159,22 @@ export const VantageTelemetryPanel: React.FC = () => {
                     <span
                       className={`text-[11px] font-bold ${
                         status === 'working'
-                          ? 'text-cyan-300'
+                          ? 'text-cyan-600'
                           : status === 'complete'
-                          ? 'text-emerald-400'
+                          ? 'text-emerald-600'
                           : status === 'error'
-                          ? 'text-red-400'
+                          ? 'text-red-500'
                           : status === 'waiting'
-                          ? 'text-amber-300'
-                          : 'text-zinc-600'
+                          ? 'text-amber-600'
+                          : 'text-zinc-400'
                       }`}
                     >
                       {node.label}
                     </span>
-                    <span className="text-zinc-700 text-[9px] ml-1.5">{node.desc}</span>
+                    <span className="text-zinc-400 text-[9px] ml-1.5">{node.desc}</span>
                   </div>
                   {i < PIPELINE_NODES.length - 1 && (
-                    <ChevronRight size={10} className="text-zinc-800 shrink-0" />
+                    <ChevronRight size={10} className="text-zinc-300 shrink-0" />
                   )}
                 </div>
               );
@@ -184,26 +184,26 @@ export const VantageTelemetryPanel: React.FC = () => {
 
         {/* HITL */}
         {vantageHitl && (
-          <div className="mx-3 my-2 bg-red-950/40 border border-red-900/50 rounded-xl p-3 shrink-0">
+          <div className="mx-3 my-2 bg-red-50 border border-red-200 rounded-xl p-3 shrink-0">
             <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle size={12} className="text-red-400 shrink-0" />
-              <span className="text-[9px] font-black uppercase tracking-widest text-red-400">
+              <AlertTriangle size={12} className="text-red-500 shrink-0" />
+              <span className="text-[9px] font-black uppercase tracking-widest text-red-500">
                 HITL Checkpoint
               </span>
             </div>
-            <p className="text-[10px] text-zinc-300 leading-relaxed mb-3">
+            <p className="text-[10px] text-zinc-600 leading-relaxed mb-3">
               {vantageHitl.description}
             </p>
             <div className="flex gap-2">
               <button
                 onClick={handleApprove}
-                className="flex-1 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
+                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
               >
                 Approve
               </button>
               <button
                 onClick={handleReject}
-                className="flex-1 py-2 bg-red-800 hover:bg-red-700 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
+                className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
               >
                 Reject
               </button>
@@ -213,8 +213,8 @@ export const VantageTelemetryPanel: React.FC = () => {
 
         {/* Dependency map */}
         {depEntries.length > 0 && (
-          <div className="px-3 py-2 border-b border-zinc-800/60">
-            <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-600 mb-1.5">
+          <div className="px-3 py-2 border-b border-zinc-200">
+            <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-1.5">
               Dep Map
             </p>
             <div className="flex flex-col gap-0.5">
@@ -224,14 +224,14 @@ export const VantageTelemetryPanel: React.FC = () => {
                     {file.split('/').pop()}
                   </span>
                   {deps.length > 0 && (
-                    <span className="text-zinc-700 ml-2">
+                    <span className="text-zinc-400 ml-2">
                       ↳ {deps.map((d) => d.split('/').pop()).join(', ')}
                     </span>
                   )}
                 </div>
               ))}
               {Object.keys(dependencyMap).length > 8 && (
-                <span className="text-[9px] text-zinc-700">
+                <span className="text-[9px] text-zinc-400">
                   +{Object.keys(dependencyMap).length - 8} more
                 </span>
               )}
@@ -241,11 +241,11 @@ export const VantageTelemetryPanel: React.FC = () => {
 
         {/* Chat history */}
         <div className="flex-1 px-3 py-2 min-h-0 overflow-y-auto [scrollbar-width:none]">
-          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-600 mb-2">
+          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-2">
             Chat
           </p>
           {messages.length === 0 ? (
-            <p className="text-[10px] text-zinc-700">
+            <p className="text-[10px] text-zinc-400">
               Send a message to start the pipeline.
             </p>
           ) : (
@@ -260,12 +260,12 @@ export const VantageTelemetryPanel: React.FC = () => {
                     <div
                       className={`max-w-[90%] rounded-xl px-2.5 py-1.5 text-[10px] leading-relaxed ${
                         msg.role === 'user'
-                          ? 'bg-cyan-900/50 text-cyan-100 rounded-tr-none'
-                          : 'bg-zinc-800 text-zinc-300 rounded-tl-none'
+                          ? 'bg-cyan-50 text-cyan-800 rounded-tr-none'
+                          : 'bg-zinc-100 text-zinc-700 rounded-tl-none'
                       }`}
                     >
                       {msg.role === 'assistant' ? (
-                        <div className="markdown-vantage prose prose-invert prose-xs max-w-none">
+                        <div className="markdown-vantage prose prose-zinc prose-xs max-w-none">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {msg.content}
                           </ReactMarkdown>
@@ -283,7 +283,7 @@ export const VantageTelemetryPanel: React.FC = () => {
       </div>
 
       {/* Input */}
-      <div className="p-2 border-t border-zinc-800/60 shrink-0">
+      <div className="p-2 border-t border-zinc-200 shrink-0">
         <div className="flex items-end gap-1.5">
           <textarea
             value={input}
@@ -296,7 +296,7 @@ export const VantageTelemetryPanel: React.FC = () => {
             }}
             placeholder="Describe what to build…"
             rows={2}
-            className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-[11px] text-zinc-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-cyan-700 transition-colors [scrollbar-width:none]"
+            className="flex-1 bg-zinc-50 border border-zinc-300 rounded-xl px-3 py-2 text-[11px] text-zinc-800 placeholder-zinc-400 resize-none focus:outline-none focus:border-cyan-500 transition-colors [scrollbar-width:none]"
           />
           <button
             onClick={handleSend}
@@ -304,7 +304,7 @@ export const VantageTelemetryPanel: React.FC = () => {
             className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 shrink-0 ${
               input.trim() && !sending
                 ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-900/50'
-                : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+                : 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
             }`}
           >
             {sending ? (
@@ -314,7 +314,7 @@ export const VantageTelemetryPanel: React.FC = () => {
             )}
           </button>
         </div>
-        <p className="text-[8px] text-zinc-700 mt-1 text-center uppercase tracking-widest">
+        <p className="text-[8px] text-zinc-400 mt-1 text-center uppercase tracking-widest">
           ↵ send · shift+↵ newline
         </p>
       </div>

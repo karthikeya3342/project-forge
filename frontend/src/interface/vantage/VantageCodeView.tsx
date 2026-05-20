@@ -33,21 +33,21 @@ export const VantageCodeView: React.FC = () => {
   const lang = detectLanguage(selectedFilePath);
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950">
+    <div className="flex flex-col h-full bg-white">
       {/* Tab bar */}
-      <div className="h-9 flex items-center gap-2 px-3 border-b border-zinc-800/60 shrink-0 bg-zinc-900">
+      <div className="h-9 flex items-center gap-2 px-3 border-b border-zinc-200 shrink-0 bg-zinc-50">
         <button
           onClick={() => setMainView('3d')}
-          className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="flex items-center gap-1 text-zinc-400 hover:text-zinc-600 transition-colors"
         >
           <ChevronLeft size={13} />
         </button>
         <Code2 size={12} className="text-cyan-500 shrink-0" />
-        <span className="text-[11px] text-zinc-300 font-mono truncate">
+        <span className="text-[11px] text-zinc-700 font-mono truncate">
           {selectedFilePath ?? 'No file selected'}
         </span>
         {selectedFilePath && (
-          <span className="ml-auto text-[9px] font-black uppercase tracking-widest text-zinc-600">
+          <span className="ml-auto text-[9px] font-black uppercase tracking-widest text-zinc-400">
             {lang}
           </span>
         )}
@@ -60,7 +60,7 @@ export const VantageCodeView: React.FC = () => {
             height="100%"
             language={lang}
             value={content}
-            theme="vs-dark"
+            theme="light"
             options={{
               readOnly: true,
               minimap: { enabled: false },
@@ -76,8 +76,8 @@ export const VantageCodeView: React.FC = () => {
           />
         ) : (
           <div className="flex flex-col items-center justify-center h-full gap-3">
-            <Code2 size={28} className="text-zinc-700" />
-            <p className="text-[11px] text-zinc-600 text-center">
+            <Code2 size={28} className="text-zinc-400" />
+            <p className="text-[11px] text-zinc-500 text-center">
               Click a file in the explorer to view it
             </p>
           </div>
