@@ -392,19 +392,7 @@ Begin now. Start with list_dir('.') to confirm the workspace state."""
         tool_responses: list[tuple[str, str]] = []
         for fc in func_calls:
             result_text = _exec(fc["name"], fc["args"])
-
-            # Show tool call + result in frontend chat stream
-            arg_preview = str(fc["args"])[:80]
-            result_preview = result_text[:300]
-            _broadcast_ws({
-                "type": "agent_token",
-                "agent": "swe_agent",
-                "text": (
-                    f"\n\n**▶ {fc['name']}** `{arg_preview}`\n"
-                    f"```\n{result_preview}\n```\n"
-                ),
-            })
-
+            # tool_call event already broadcast inside _exec — no duplicate needed
             tool_responses.append((fc["name"], result_text))
 
             if ctx["hitl_required"] or ctx["done"]:

@@ -82,15 +82,16 @@ export function connectVantageWs() {
         return;
       }
 
-      // Tool call event — show which tool SWE-Agent is using
+      // Tool call event — compact single-line indicator in stream
       if (type === 'tool_call') {
         const tool = packet.tool as string;
         const args = packet.args as Record<string, unknown>;
-        // Surface as a streaming token so it appears inline in the chat stream
-        const argStr = Object.entries(args ?? {})
-          .map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`)
-          .join(', ');
-        vantage.appendStreamingChunk(agentName || 'swe_agent', `\n🔧 **${tool}**(${argStr})\n`);
+        const firstArg = args ? Object.values(args)[0] : '';
+        const preview = typeof firstArg === 'string' ? firstArg.slice(0, 50) : '';
+        vantage.appendStreamingChunk(
+          agentName || 'swe_agent',
+          `\n\`${tool}(${preview ? `"${preview}"` : ''})\``,
+        );
         return;
       }
 

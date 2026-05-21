@@ -4,11 +4,13 @@ import {
   Circle,
   Loader2,
   AlertTriangle,
-  ChevronRight,
   Send,
   AlertCircle,
   ShieldCheck,
   XCircle,
+  Terminal,
+  ToggleLeft,
+  ToggleRight,
 } from 'lucide-react';
 import { useVantageStore } from '../../integration/store/vantageStore';
 import { useUiStore } from '../../integration/store/uiStore';
@@ -16,38 +18,205 @@ import { useCoreStore } from '../../integration/store/coreStore';
 import { startVantagePipeline } from '../../integration/vantageApi';
 import { connectVantageWs } from '../../integration/vantageWs';
 import { resolveHITL } from '../../integration/vantageApi';
-import { addAlwaysAllowed } from '../../integration/vantageAlwaysAllow';
+import { addAlwaysAllowed, isAlwaysAllowed } from '../../integration/vantageAlwaysAllow';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const PIPELINE_NODES = [
-  { id: 'codeplan', label: 'CodePlan', desc: 'Repository scan' },
-  { id: 'parsel', label: 'Parsel', desc: 'Task decomposer' },
-  { id: 'swe_agent', label: 'SWE-Agent', desc: 'Code writer' },
-  { id: 'autocoderover', label: 'AutoCodeRover', desc: 'AST auditor' },
+  { id: 'codeplan',      label: 'CodePlan'      },
+  { id: 'parsel',        label: 'Parsel'        },
+  { id: 'swe_agent',     label: 'SWE-Agent'     },
+  { id: 'autocoderover', label: 'AutoCodeRover' },
 ];
+
+const AGENT_COLORS: Record<string, string> = {
+  codeplan:      'bg-cyan-500',
+  parsel:        'bg-violet-500',
+  swe_agent:     'bg-orange-500',
+  autocoderover: 'bg-pink-500',
+  orchestrator:  'bg-yellow-500',
+};
 
 type NodeStatus = 'idle' | 'working' | 'complete' | 'error' | 'waiting';
 
-function NodeIcon({ status }: { status: NodeStatus }) {
-  switch (status) {
-    case 'working':
-      return <Loader2 size={13} className="text-cyan-400 animate-spin" />;
-    case 'complete':
-      return <CheckCircle2 size={13} className="text-emerald-400" />;
-    case 'error':
-      return <AlertCircle size={13} className="text-red-400" />;
-    case 'waiting':
-      return <AlertTriangle size={13} className="text-amber-400" />;
-    default:
-      return <Circle size={13} className="text-zinc-400" />;
-  }
+function NodeDot({ status }: { status: NodeStatus }) {
+  if (status === 'working')
+    return <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse inline-block" />;
+  if (status === 'complete')
+    return <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />;
+  if (status === 'error')
+    return <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />;
+  if (status === 'waiting')
+    return <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />;
+  return <span className="w-1.5 h-1.5 rounded-full bg-zinc-300 inline-block" />;
 }
 
+// ── Message renderer ──────────────────────────────────────────────────────
+
+function ChatMessage({ msg }: { msg: any }) {
+  const isUser = msg.role === 'user';
+
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] bg-zinc-900 text-white rounded-2xl rounded-br-sm px-3 py-2 text-[11px] leading-relaxed">
+          <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Detect agent label from content like **[CodePlan]**
+  const agentMatch = msg.content?.match(/^\*\*\[([^\]]+)\]\*\*/);
+  const agentLabel = agentMatch?.[1] ?? null;
+  const agentKey = agentLabel?.toLowerCase().replace(/-/g, '_').replace(' ', '_') ?? '';
+  const dotColor = AGENT_COLORS[agentKey] ?? 'bg-zinc-400';
+
+  return (
+    <div className="flex flex-col gap-1">
+      {agentLabel && (
+        <div className="flex items-center gap-1.5 px-1">
+          <span className={`w-1.5 h-1.5 rounded-full ${dotColor} shrink-0`} />
+          <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">
+            {agentLabel}
+          </span>
+        </div>
+      )}
+      <div className="max-w-[95%] bg-zinc-50 border border-zinc-200 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] leading-relaxed text-zinc-700">
+        <div className="prose prose-zinc prose-xs max-w-none overflow-hidden
+          [&_pre]:overflow-x-auto [&_pre]:text-[9px] [&_pre]:bg-zinc-900
+          [&_pre]:text-zinc-100 [&_pre]:rounded-lg [&_pre]:p-2 [&_pre]:my-1.5
+          [&_pre]:whitespace-pre-wrap [&_code]:break-words
+          [&_code:not(pre_code)]:bg-zinc-200 [&_code:not(pre_code)]:px-1 [&_code:not(pre_code)]:rounded
+          [&_code:not(pre_code)]:text-[10px] [&_code:not(pre_code)]:text-zinc-700
+          [&_p]:break-words [&_p]:my-1 [&_li]:break-words
+          [&_h1]:text-[12px] [&_h1]:font-black [&_h1]:text-zinc-800
+          [&_h2]:text-[11px] [&_h2]:font-bold [&_h2]:text-zinc-700
+          [&_strong]:text-zinc-800">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {agentLabel
+              ? msg.content.replace(/^\*\*\[[^\]]+\]\*\*\n\n?/, '')
+              : msg.content}
+          </ReactMarkdown>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Streaming bubble ──────────────────────────────────────────────────────
+
+function StreamingBubble({
+  text,
+  agent,
+}: {
+  text: string;
+  agent: string;
+}) {
+  const dotColor = AGENT_COLORS[agent] ?? 'bg-zinc-400';
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5 px-1">
+        <span className={`w-1.5 h-1.5 rounded-full ${dotColor} animate-pulse shrink-0`} />
+        <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">
+          {agent.replace('_', '-')} · live
+        </span>
+        <Loader2 size={8} className="animate-spin text-zinc-400" />
+      </div>
+      <div className="max-w-[95%] bg-zinc-50 border border-zinc-200 rounded-2xl rounded-tl-sm px-3 py-2 text-[10px] leading-relaxed text-zinc-700 font-mono">
+        <span className="whitespace-pre-wrap break-all">{text}</span>
+        <span className="inline-block w-1.5 h-3.5 bg-zinc-400 animate-pulse ml-0.5 align-middle rounded-sm" />
+      </div>
+    </div>
+  );
+}
+
+// ── HITL inline card ──────────────────────────────────────────────────────
+
+function HitlCard({
+  hitl,
+  onApprove,
+  onReject,
+  onAlwaysAllow,
+}: {
+  hitl: { type: string; description: string };
+  onApprove: () => void;
+  onReject: () => void;
+  onAlwaysAllow: () => void;
+}) {
+  const [alwaysOn, setAlwaysOn] = useState(isAlwaysAllowed(hitl.type));
+
+  const handleApprove = () => {
+    if (alwaysOn) onAlwaysAllow();
+    else onApprove();
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5 px-1">
+        <AlertTriangle size={10} className="text-amber-500 shrink-0" />
+        <span className="text-[9px] font-black uppercase tracking-widest text-amber-500">
+          approval required
+        </span>
+      </div>
+      <div className="border border-amber-200 bg-amber-50 rounded-2xl rounded-tl-sm p-3 flex flex-col gap-3">
+        <p className="text-[11px] text-zinc-700 leading-relaxed">{hitl.description}</p>
+
+        {/* Always-allow toggle */}
+        <button
+          onClick={() => setAlwaysOn((v) => !v)}
+          className="flex items-center gap-2 group w-fit"
+        >
+          {alwaysOn ? (
+            <ToggleRight size={16} className="text-cyan-500 shrink-0" />
+          ) : (
+            <ToggleLeft size={16} className="text-zinc-400 shrink-0" />
+          )}
+          <span
+            className={`text-[10px] font-bold transition-colors ${
+              alwaysOn ? 'text-cyan-600' : 'text-zinc-400'
+            }`}
+          >
+            Always allow <span className="font-mono">"{hitl.type}"</span>
+          </span>
+        </button>
+
+        {/* Action buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={handleApprove}
+            className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-zinc-900 hover:bg-zinc-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95"
+          >
+            <CheckCircle2 size={11} />
+            {alwaysOn ? 'Allow Always' : 'Approve'}
+          </button>
+          <button
+            onClick={onReject}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95"
+          >
+            <XCircle size={11} />
+            Reject
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main panel ────────────────────────────────────────────────────────────
+
 export const VantageTelemetryPanel: React.FC = () => {
-  const { currentNode, dependencyMap, wsLog, streamingText, streamingAgent } = useVantageStore();
-  const { vantageHitl, setVantageHitl, vantageSessionId, llmConfig, setVantageSessionId, setIsTyping, setChatting, setSelectedNpc } =
-    useUiStore() as any;
+  const { currentNode, wsLog, streamingText, streamingAgent } = useVantageStore();
+  const {
+    vantageHitl,
+    setVantageHitl,
+    vantageSessionId,
+    llmConfig,
+    setVantageSessionId,
+    setIsTyping,
+    setChatting,
+    setSelectedNpc,
+  } = useUiStore() as any;
   const core = useCoreStore();
 
   const [input, setInput] = useState('');
@@ -57,22 +226,16 @@ export const VantageTelemetryPanel: React.FC = () => {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingText]);
+  }, [messages, streamingText, vantageHitl]);
 
-  // Derive node statuses from pipeline state
   function nodeStatus(id: string): NodeStatus {
     if (currentNode === id) return 'working';
-    // Check recent ws log for agent state
     for (let i = wsLog.length - 1; i >= 0; i--) {
       const p = wsLog[i].packet;
       if (p.agent === id) {
         if (p.state === 'complete') return 'complete';
         if (p.state === 'error') return 'error';
         if (p.state === 'waiting_approval') return 'waiting';
-        if (p.state === 'working') {
-          // If this node isn't current anymore, it's done
-          return currentNode !== id ? 'complete' : 'working';
-        }
       }
     }
     return 'idle';
@@ -83,43 +246,37 @@ export const VantageTelemetryPanel: React.FC = () => {
     const text = input.trim();
     setInput('');
     setSending(true);
+    setChatting(false);
+    setIsTyping(false);
 
     core.appendAgentHistory(1, 'user', [text]);
     core.startProject(text);
 
     if (!llmConfig?.apiKey) {
-      core.appendAgentHistory(1, 'assistant', [
-        '⚠️ No API key. Click the key icon in the header to configure.',
-      ]);
+      core.appendAgentHistory(1, 'assistant', ['⚠️ No API key — click the key icon to configure.']);
       setSending(false);
       return;
     }
     if (!llmConfig?.workspacePath) {
-      core.appendAgentHistory(1, 'assistant', [
-        '⚠️ No workspace path. Click the key icon in the header.',
-      ]);
+      core.appendAgentHistory(1, 'assistant', ['⚠️ No workspace path — click the key icon to configure.']);
       setSending(false);
       return;
     }
 
-    core.appendAgentHistory(1, 'assistant', ['Initializing VANTAGE pipeline...']);
+    core.appendAgentHistory(1, 'assistant', ['Initializing VANTAGE pipeline…']);
     connectVantageWs();
 
     const result = await startVantagePipeline(text, llmConfig.workspacePath, llmConfig.apiKey);
     if ('session_id' in result) {
       setVantageSessionId(result.session_id);
       core.appendAgentHistory(1, 'assistant', [
-        `Pipeline started (\`${result.session_id.slice(0, 8)}...\`)\n\n**CodePlan → Parsel → SWE-Agent → AutoCodeRover**`,
+        `Pipeline started\n\n\`${result.session_id.slice(0, 8)}…\`\n\n**CodePlan → Parsel → SWE-Agent → AutoCodeRover**`,
       ]);
     } else {
-      core.appendAgentHistory(1, 'assistant', [
-        `❌ Backend error: ${(result as any).error}`,
-      ]);
+      core.appendAgentHistory(1, 'assistant', [`❌ Backend error: ${(result as any).error}`]);
       core.setPhase('idle');
     }
     setSending(false);
-    setChatting(false);
-    setIsTyping(false);
   };
 
   const handleApprove = async () => {
@@ -138,192 +295,99 @@ export const VantageTelemetryPanel: React.FC = () => {
     setVantageHitl(null);
   };
 
-  const depEntries = Object.entries(dependencyMap).slice(0, 8);
+  const visibleMessages = messages.filter((m: any) => !m.metadata?.internal);
 
   return (
-    <div className="w-72 h-full bg-white border-l border-zinc-200 flex flex-col overflow-hidden shrink-0">
-      {/* Header */}
-      <div className="h-9 flex items-center justify-between px-3 border-b border-zinc-200 shrink-0">
-        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400">
-          Telemetry
-        </span>
+    <div className="w-72 h-full bg-white border-l border-zinc-100 flex flex-col overflow-hidden shrink-0">
+
+      {/* ── Header ──────────────────────────────────────────────────────── */}
+      <div className="h-9 flex items-center justify-between px-3 border-b border-zinc-100 shrink-0">
+        <div className="flex items-center gap-1.5">
+          <Terminal size={11} className="text-zinc-400" />
+          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400">
+            VANTAGE
+          </span>
+        </div>
         {currentNode && (
-          <span className="text-[9px] text-cyan-400 font-black uppercase tracking-widest">
-            ● {currentNode}
+          <span className="text-[9px] text-cyan-500 font-black uppercase tracking-widest flex items-center gap-1">
+            <span className="w-1 h-1 rounded-full bg-cyan-400 animate-pulse inline-block" />
+            {currentNode.replace('_', '-')}
           </span>
         )}
       </div>
 
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.300)_transparent]">
-        {/* Pipeline */}
-        <div className="px-3 py-2 border-b border-zinc-200">
-          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-2">
-            Pipeline
-          </p>
-          <div className="flex flex-col gap-1">
-            {PIPELINE_NODES.map((node, i) => {
-              const status = nodeStatus(node.id);
-              return (
-                <div key={node.id} className="flex items-center gap-2">
-                  <NodeIcon status={status} />
-                  <div className="flex-1 min-w-0">
-                    <span
-                      className={`text-[11px] font-bold ${
-                        status === 'working'
-                          ? 'text-cyan-600'
-                          : status === 'complete'
-                          ? 'text-emerald-600'
-                          : status === 'error'
-                          ? 'text-red-500'
-                          : status === 'waiting'
-                          ? 'text-amber-600'
-                          : 'text-zinc-400'
-                      }`}
-                    >
-                      {node.label}
-                    </span>
-                    <span className="text-zinc-400 text-[9px] ml-1.5">{node.desc}</span>
-                  </div>
-                  {i < PIPELINE_NODES.length - 1 && (
-                    <ChevronRight size={10} className="text-zinc-300 shrink-0" />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* HITL */}
-        {vantageHitl && (
-          <div className="mx-3 my-2 bg-red-50 border border-red-200 rounded-xl p-3 shrink-0">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle size={12} className="text-red-500 shrink-0" />
-              <span className="text-[9px] font-black uppercase tracking-widest text-red-500">
-                HITL Checkpoint
-              </span>
-            </div>
-            <p className="text-[10px] text-zinc-600 leading-relaxed mb-3">
-              {vantageHitl.description}
-            </p>
-            <div className="flex gap-1.5">
-              <button
-                onClick={handleApprove}
-                className="flex-1 flex items-center justify-center gap-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
-              >
-                <CheckCircle2 size={11} />
-                Approve
-              </button>
-              <button
-                onClick={handleAlwaysAllow}
-                className="flex-1 flex items-center justify-center gap-1 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
-                title="Approve and never ask again for this type"
-              >
-                <ShieldCheck size={11} />
-                Always
-              </button>
-              <button
-                onClick={handleReject}
-                className="flex-1 flex items-center justify-center gap-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all active:scale-95"
-              >
-                <XCircle size={11} />
-                Reject
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Dependency map */}
-        {depEntries.length > 0 && (
-          <div className="px-3 py-2 border-b border-zinc-200">
-            <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-1.5">
-              Dep Map
-            </p>
-            <div className="flex flex-col gap-0.5">
-              {depEntries.map(([file, deps]) => (
-                <div key={file} className="text-[9px] font-mono">
-                  <span className="text-zinc-400 truncate block">
-                    {file.split('/').pop()}
-                  </span>
-                  {deps.length > 0 && (
-                    <span className="text-zinc-400 ml-2">
-                      ↳ {deps.map((d) => d.split('/').pop()).join(', ')}
-                    </span>
-                  )}
-                </div>
-              ))}
-              {Object.keys(dependencyMap).length > 8 && (
-                <span className="text-[9px] text-zinc-400">
-                  +{Object.keys(dependencyMap).length - 8} more
+      {/* ── Pipeline strip ───────────────────────────────────────────────── */}
+      <div className="px-3 py-1.5 border-b border-zinc-100 shrink-0 flex items-center gap-3">
+        {PIPELINE_NODES.map((node, i) => {
+          const status = nodeStatus(node.id);
+          return (
+            <React.Fragment key={node.id}>
+              <div className="flex items-center gap-1">
+                <NodeDot status={status} />
+                <span
+                  className={`text-[9px] font-bold ${
+                    status === 'working'
+                      ? 'text-cyan-500'
+                      : status === 'complete'
+                      ? 'text-emerald-500'
+                      : status === 'error'
+                      ? 'text-red-500'
+                      : status === 'waiting'
+                      ? 'text-amber-500'
+                      : 'text-zinc-300'
+                  }`}
+                >
+                  {node.label}
                 </span>
+              </div>
+              {i < PIPELINE_NODES.length - 1 && (
+                <span className="text-zinc-200 text-[9px]">›</span>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* Chat history */}
-        <div className="flex-1 px-3 py-2 min-h-0 overflow-y-auto [scrollbar-width:none]">
-          <p className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-400 mb-2">
-            Chat
-          </p>
-          {messages.length === 0 ? (
-            <p className="text-[10px] text-zinc-400">
-              Send a message to start the pipeline.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {messages
-                .filter((m: any) => !m.metadata?.internal)
-                .map((msg: any, i: number) => (
-                  <div
-                    key={i}
-                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[90%] min-w-0 overflow-hidden rounded-xl px-2.5 py-1.5 text-[10px] leading-relaxed ${
-                        msg.role === 'user'
-                          ? 'bg-cyan-50 text-cyan-800 rounded-tr-none'
-                          : 'bg-zinc-100 text-zinc-700 rounded-tl-none'
-                      }`}
-                    >
-                      {msg.role === 'assistant' ? (
-                        <div className="markdown-vantage prose prose-zinc prose-xs max-w-none overflow-x-hidden [&_pre]:overflow-x-auto [&_pre]:text-[9px] [&_pre]:whitespace-pre-wrap [&_code]:break-words [&_p]:break-words [&_li]:break-words">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {msg.content}
-                          </ReactMarkdown>
-                        </div>
-                      ) : (
-                        <span className="whitespace-pre-wrap break-words">{msg.content}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              {/* Live streaming bubble */}
-              {streamingText && (
-                <div className="flex justify-start">
-                  <div className="max-w-[95%] rounded-xl px-2.5 py-1.5 text-[10px] leading-relaxed bg-zinc-50 text-zinc-700 rounded-tl-none border border-zinc-200">
-                    <div className="flex items-center gap-1 mb-1 pb-1 border-b border-zinc-100">
-                      <Loader2 size={9} className="animate-spin text-cyan-500 shrink-0" />
-                      <span className="text-[9px] text-cyan-500 font-black uppercase tracking-widest">
-                        {streamingAgent || 'agent'} · streaming
-                      </span>
-                    </div>
-                    <span className="whitespace-pre-wrap font-mono text-[9px] break-all">
-                      {streamingText}
-                    </span>
-                    <span className="inline-block w-1 h-3 bg-cyan-400 animate-pulse ml-0.5 align-middle rounded-sm" />
-                  </div>
-                </div>
-              )}
-
-              <div ref={chatEndRef} />
-            </div>
-          )}
-        </div>
+            </React.Fragment>
+          );
+        })}
       </div>
 
-      {/* Input */}
-      <div className="p-2 border-t border-zinc-200 shrink-0">
-        <div className="flex items-end gap-1.5">
+      {/* ── Chat ─────────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3 min-h-0 [scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.200)_transparent]">
+        {visibleMessages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-center pb-4">
+            <div className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center">
+              <Terminal size={14} className="text-zinc-400" />
+            </div>
+            <p className="text-[10px] text-zinc-400 leading-relaxed">
+              Describe what to build.<br />VANTAGE will plan and execute it.
+            </p>
+          </div>
+        ) : (
+          <>
+            {visibleMessages.map((msg: any, i: number) => (
+              <ChatMessage key={i} msg={msg} />
+            ))}
+          </>
+        )}
+
+        {/* Live streaming bubble */}
+        {streamingText && (
+          <StreamingBubble text={streamingText} agent={streamingAgent || 'agent'} />
+        )}
+
+        {/* HITL inline card — appears at bottom of chat flow */}
+        {vantageHitl && (
+          <HitlCard
+            hitl={vantageHitl}
+            onApprove={handleApprove}
+            onReject={handleReject}
+            onAlwaysAllow={handleAlwaysAllow}
+          />
+        )}
+
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* ── Input ────────────────────────────────────────────────────────── */}
+      <div className="p-2 border-t border-zinc-100 shrink-0">
+        <div className="flex items-end gap-1.5 bg-zinc-50 border border-zinc-200 rounded-2xl px-3 py-2 focus-within:border-zinc-400 transition-colors">
           <textarea
             value={input}
             onChange={(e) => {
@@ -346,25 +410,25 @@ export const VantageTelemetryPanel: React.FC = () => {
             }}
             placeholder="Describe what to build…"
             rows={2}
-            className="flex-1 bg-zinc-50 border border-zinc-300 rounded-xl px-3 py-2 text-[11px] text-zinc-800 placeholder-zinc-400 resize-none focus:outline-none focus:border-cyan-500 transition-colors [scrollbar-width:none]"
+            className="flex-1 bg-transparent text-[11px] text-zinc-800 placeholder-zinc-400 resize-none focus:outline-none [scrollbar-width:none]"
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || sending}
-            className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 shrink-0 ${
+            className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all active:scale-95 shrink-0 mb-0.5 ${
               input.trim() && !sending
-                ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-900/50'
-                : 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+                ? 'bg-zinc-900 hover:bg-zinc-700 text-white'
+                : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
             }`}
           >
             {sending ? (
-              <Loader2 size={13} className="animate-spin" />
+              <Loader2 size={12} className="animate-spin" />
             ) : (
-              <Send size={13} />
+              <Send size={12} />
             )}
           </button>
         </div>
-        <p className="text-[8px] text-zinc-400 mt-1 text-center uppercase tracking-widest">
+        <p className="text-[8px] text-zinc-300 mt-1 text-center tracking-widest uppercase">
           ↵ send · shift+↵ newline
         </p>
       </div>
