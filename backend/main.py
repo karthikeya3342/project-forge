@@ -38,6 +38,9 @@ load_dotenv()
 _checkpointer = MemorySaver()
 _graph = None  # built after lifespan sets broadcast
 
+# Running pipeline tasks keyed by session_id (for cancellation)
+_running_tasks: dict[str, asyncio.Task] = {}
+
 
 def get_graph():
     global _graph
@@ -138,8 +141,10 @@ async def start_pipeline(req: StartRequest):
 
     graph = get_graph()
 
-    # Run pipeline in background task
-    asyncio.create_task(_run_pipeline(graph, initial_state, session_id))
+    # Run pipeline in background task — store ref for cancellation
+    task = asyncio.create_task(_run_pipeline(graph, initial_state, session_id))
+    _running_tasks[session_id] = task
+    task.add_done_callback(lambda _: _running_tasks.pop(session_id, None))
 
     return {"session_id": session_id, "status": "started"}
 
@@ -190,6 +195,29 @@ async def _resume_pipeline(graph, config: dict, session_id: str):
             "state": "error",
             "message": str(e),
         }))
+
+
+@app.post("/api/stop/{session_id}")
+async def stop_pipeline(session_id: str):
+    task = _running_tasks.get(session_id)
+    if task and not task.done():
+        task.cancel()
+
+    # Mark session stopped in DB
+    db = SessionLocal()
+    session = db.query(AgentSession).filter_by(session_id=session_id).first()
+    if session:
+        session.status = "stopped"
+        db.commit()
+    db.close()
+
+    await broadcast_telemetry(json.dumps({
+        "type": "pipeline_error",
+        "agent": "orchestrator",
+        "state": "error",
+        "message": "Pipeline stopped by user.",
+    }))
+    return {"session_id": session_id, "status": "stopped"}
 
 
 @app.get("/api/status/{session_id}")

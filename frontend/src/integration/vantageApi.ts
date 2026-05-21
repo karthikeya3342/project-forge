@@ -28,6 +28,10 @@ export async function resolveHITL(
   });
 }
 
+export async function stopVantagePipeline(sessionId: string): Promise<void> {
+  await fetch(`/api/stop/${sessionId}`, { method: 'POST' });
+}
+
 export async function fetchWorkspaceTree(
   workspacePath: string
 ): Promise<{ tree: any[]; error?: string }> {

@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
-  Circle,
   Loader2,
   AlertTriangle,
   Send,
-  AlertCircle,
-  ShieldCheck,
+  Square,
   XCircle,
   Terminal,
   ToggleLeft,
@@ -15,7 +13,7 @@ import {
 import { useVantageStore } from '../../integration/store/vantageStore';
 import { useUiStore } from '../../integration/store/uiStore';
 import { useCoreStore } from '../../integration/store/coreStore';
-import { startVantagePipeline } from '../../integration/vantageApi';
+import { startVantagePipeline, stopVantagePipeline } from '../../integration/vantageApi';
 import { connectVantageWs } from '../../integration/vantageWs';
 import { resolveHITL } from '../../integration/vantageApi';
 import { addAlwaysAllowed, isAlwaysAllowed } from '../../integration/vantageAlwaysAllow';
@@ -279,6 +277,16 @@ export const VantageTelemetryPanel: React.FC = () => {
     setSending(false);
   };
 
+  const pipelineRunning = !!currentNode || sending;
+
+  const handleStop = async () => {
+    if (vantageSessionId) await stopVantagePipeline(vantageSessionId);
+    setSending(false);
+    setChatting(false);
+    setIsTyping(false);
+    core.setPhase('idle');
+  };
+
   const handleApprove = async () => {
     if (vantageSessionId) await resolveHITL(vantageSessionId, true);
     setVantageHitl(null);
@@ -412,21 +420,27 @@ export const VantageTelemetryPanel: React.FC = () => {
             rows={2}
             className="flex-1 bg-transparent text-[11px] text-zinc-800 placeholder-zinc-400 resize-none focus:outline-none [scrollbar-width:none]"
           />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || sending}
-            className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all active:scale-95 shrink-0 mb-0.5 ${
-              input.trim() && !sending
-                ? 'bg-zinc-900 hover:bg-zinc-700 text-white'
-                : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
-            }`}
-          >
-            {sending ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
+          {pipelineRunning ? (
+            <button
+              onClick={handleStop}
+              className="w-7 h-7 rounded-xl flex items-center justify-center transition-all active:scale-95 shrink-0 mb-0.5 bg-red-500 hover:bg-red-400 text-white"
+              title="Stop pipeline"
+            >
+              <Square size={11} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className={`w-7 h-7 rounded-xl flex items-center justify-center transition-all active:scale-95 shrink-0 mb-0.5 ${
+                input.trim()
+                  ? 'bg-zinc-900 hover:bg-zinc-700 text-white'
+                  : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+              }`}
+            >
               <Send size={12} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
         <p className="text-[8px] text-zinc-300 mt-1 text-center tracking-widest uppercase">
           ↵ send · shift+↵ newline
