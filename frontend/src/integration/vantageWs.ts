@@ -79,7 +79,19 @@ export function connectVantageWs() {
       if (type === 'agent_token') {
         const chunk = packet.text as string;
         if (chunk) vantage.appendStreamingChunk(agentName || 'agent', chunk);
-        return; // no further processing needed for token packets
+        return;
+      }
+
+      // Tool call event — show which tool SWE-Agent is using
+      if (type === 'tool_call') {
+        const tool = packet.tool as string;
+        const args = packet.args as Record<string, unknown>;
+        // Surface as a streaming token so it appears inline in the chat stream
+        const argStr = Object.entries(args ?? {})
+          .map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`)
+          .join(', ');
+        vantage.appendStreamingChunk(agentName || 'swe_agent', `\n🔧 **${tool}**(${argStr})\n`);
+        return;
       }
 
       // File write event: update content cache + mark as modifying
