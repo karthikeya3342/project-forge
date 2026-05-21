@@ -63,10 +63,12 @@ export function connectVantageWs() {
       const core = useCoreStore.getState();
       const vantage = useVantageStore.getState();
 
-      // ── Always append to WS log ──────────────────────────────────────────
-      vantage.appendWsLog({ ts: Date.now(), raw, packet });
-
       const type = packet.type as string | undefined;
+
+      // ── Skip logging high-frequency stream packets ────────────────────────
+      if (type !== 'agent_token' && type !== 'tool_call') {
+        vantage.appendWsLog({ ts: Date.now(), raw, packet });
+      }
       const agentName = (packet.agent as string) ?? '';
       const agentIdx = AGENT_INDEX[agentName];
       const label = AGENT_LABEL[agentName] ?? agentName;
