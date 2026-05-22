@@ -17,6 +17,7 @@ import { useUiStore } from '../integration/store/uiStore';
 import { useVantageStore } from '../integration/store/vantageStore';
 import { AgentBehavior, ChatMessage } from '../types';
 import { BUBBLE_Y_OFFSET } from './constants';
+import { VantageFX } from './VantageFX';
 
 /**
  * SceneManager — Visual Integration Layer.
@@ -36,6 +37,7 @@ export class SceneManager {
   private worldManager: WorldManager;
   private driverManager: DriverManager | null = null;
   private simulation: AgentSimulation | null = null;
+  private vantageFX: VantageFX | null = null;
 
   private lastAgentSetId: string | null = null;
   private selectedIndex: number | null = null;
@@ -122,7 +124,19 @@ export class SceneManager {
     new InputManager(
       this.engine.renderer.domElement, this.stage.camera,
       () => this.controller!.getCPUPositions(), () => this.controller!.getCount(),
-      (idx) => { if (useUiStore.getState().isChatting) useUiStore.getState().setChatting(false); this.selectedIndex = idx !== activeSet.user.index ? idx : null; useUiStore.getState().setSelectedNpc(this.selectedIndex); },
+      (idx) => {
+        if (useUiStore.getState().isChatting) useUiStore.getState().setChatting(false);
+        this.selectedIndex = idx !== activeSet.user.index ? idx : null;
+        useUiStore.getState().setSelectedNpc(this.selectedIndex);
+        // VANTAGE: click NPC → filter chat to that agent
+        const set = getActiveAgentSet();
+        if (set.id === 'vantage' && idx !== null && idx !== set.user.index && idx !== set.leadAgent.index) {
+          const vs = useVantageStore.getState();
+          vs.setFocusedAgentIndex(vs.focusedAgentIndex === idx ? null : idx);
+        } else if (set.id === 'vantage') {
+          useVantageStore.getState().setFocusedAgentIndex(null);
+        }
+      },
       (x, z) => this.driverManager?.getPlayerDriver().onFloorClick(x, z),
       (idx, pos) => useUiStore.getState().setHoveredNpc(idx, pos),
       () => this.poiManager.getAllPois(),
@@ -131,37 +145,72 @@ export class SceneManager {
       this.worldManager.getOffice() ?? undefined, (p) => this.navMesh.isPointOnNavMesh(p)
     );
 
-    // ── VANTAGE: camera follow + desk walk for active pipeline agent ──
+    // ── VANTAGE: camera follow + desk walk + FX for active pipeline agent ──
     const VANTAGE_AGENT_IDX: Record<string, number> = {
       codeplan: 2, parsel: 3, swe_agent: 4, autocoderover: 5,
     };
 
+    // Initialize VantageFX for pipeline visualizations
+    this.vantageFX = new VantageFX(this.stage.scene);
+
+    // Track completed agents for status board
+    const completedAgents: string[] = [];
+
     this.unsubs.push(
       useVantageStore.subscribe((s, prev) => {
-        if (s.currentNode !== prev.currentNode && this.controller) {
-          const set = getActiveAgentSet();
-          if (set.id !== 'vantage') return;
+        const set = getActiveAgentSet();
+        if (set.id !== 'vantage') return;
 
+        // ── Node change: camera + desk walk + FX ─────────────────────────
+        if (s.currentNode !== prev.currentNode && this.controller) {
           const idx = VANTAGE_AGENT_IDX[s.currentNode];
           if (idx) {
-            // Camera follows active agent
-            this.selectedIndex = idx;
-            useUiStore.getState().setSelectedNpc(idx);
-            // Walk agent to their work desk
             this.setNpcWorking(idx, true);
+            // FX: progress ring + ground glow + status board
+            this.vantageFX?.setActiveAgent(idx);
+            this.vantageFX?.addGroundGlow(idx);
+            this.vantageFX?.updateStatusBoard(s.currentNode, completedAgents);
           }
 
-          // Previous agent done — send back to spawn
-          const prevIdx = VANTAGE_AGENT_IDX[prev.currentNode];
-          if (prevIdx && prevIdx !== idx) {
-            this.setNpcWorking(prevIdx, false);
-            this.moveNpcToSpawn(prevIdx);
+          // Previous agent done — mark complete, send back to spawn
+          if (prev.currentNode && prev.currentNode !== s.currentNode) {
+            if (!completedAgents.includes(prev.currentNode)) {
+              completedAgents.push(prev.currentNode);
+            }
+            const prevIdx = VANTAGE_AGENT_IDX[prev.currentNode];
+            if (prevIdx && prevIdx !== (idx ?? -1)) {
+              this.setNpcWorking(prevIdx, false);
+              this.moveNpcToSpawn(prevIdx);
+              this.vantageFX?.removeGroundGlow(prevIdx);
+              this.vantageFX?.removeFileCard(prevIdx);
+            }
           }
 
-          // Pipeline finished — camera back to player
+          // Pipeline finished — clear all FX
           if (!s.currentNode) {
-            this.selectedIndex = null;
-            useUiStore.getState().setSelectedNpc(null);
+            this.vantageFX?.clearAll();
+            completedAgents.length = 0;
+          }
+        }
+
+      })
+    );
+
+    // ── Error explosion: subscribe to coreStore phase changes ────────────
+    this.unsubs.push(
+      useCoreStore.subscribe((s, prev) => {
+        const set = getActiveAgentSet();
+        if (set.id !== 'vantage') return;
+
+        // Pipeline error → explosion on active agent
+        if (s.phase === 'idle' && prev.phase !== 'idle' && prev.phase !== 'done') {
+          const currentNode = useVantageStore.getState().currentNode;
+          const idx = VANTAGE_AGENT_IDX[currentNode];
+          if (idx && this.vantageFX) {
+            this.vantageFX.triggerErrorExplosion(idx);
+            this.vantageFX.setAgentError(currentNode);
+            // Re-render status board with error state
+            this.vantageFX.updateStatusBoard(currentNode, completedAgents);
           }
         }
       })
@@ -366,6 +415,11 @@ export class SceneManager {
       if (!pos || !this.controller) return;
       this.controller.updatePaths(pos); this.driverManager?.update(pos, delta);
       this.updateTransparency(pos, delta);
+      // Feed VantageFX with positions
+      if (this.vantageFX) {
+        this.vantageFX.updatePositions(pos, this.controller.getCount());
+        this.vantageFX.update(delta);
+      }
     });
     const player = getActiveAgentSet().user.index;
     this.stage.setFollowTarget(this.controller?.getCPUPosition(this.selectedIndex ?? player) ?? null);
@@ -415,5 +469,5 @@ export class SceneManager {
     this.stage.setChatMode(false, false);
   }
 
-  public dispose() { this.isDisposed = true; this.resizeObserver.disconnect(); this.unsubs.forEach(u => u()); this.driverManager?.dispose(); this.engine.dispose(); }
+  public dispose() { this.isDisposed = true; this.resizeObserver.disconnect(); this.unsubs.forEach(u => u()); this.vantageFX?.dispose(); this.driverManager?.dispose(); this.engine.dispose(); }
 }

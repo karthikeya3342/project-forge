@@ -242,19 +242,20 @@ def run_codeplan(state: VantageState) -> dict:
 {dep_summary}
 
 ## Your job
-Analyze the task and existing code. Generate:
-1. A short kebab-case project name (max 30 chars)
-2. An ordered execution plan (max 12 steps, most important first)
-3. Files that might be overwritten (risky_overwrites)
+Analyze the user's task and generate a focused execution plan.
 
-Rules:
-- If existing code is relevant, the plan must BUILD ON IT, not replace it
-- Steps should be concrete ("Create src/models/user.py with User dataclass")
-- Sequence matters — foundations before features, imports before usages
+CRITICAL RULES:
+- Detect the tech stack FROM THE USER'S PROMPT, not from existing files in the workspace
+- If user says "Python", use Python. If user says "React", use React/TypeScript. Etc.
+- Only reference existing code if it is in the SAME language the user requested
+- Max 6 plan steps — be concise, combine related work into single steps
+- Each step must be a concrete file operation ("Create src/main.py with X, Y, Z")
+- Do NOT split trivial work into many steps. One file = one step unless very complex.
 
 Respond ONLY with valid JSON, no markdown fences:
 {{
   "project_name": "kebab-case-name",
+  "tech_stack": "Python",
   "plan": [
     "Step 1: ...",
     "Step 2: ..."
@@ -290,8 +291,7 @@ Respond ONLY with valid JSON, no markdown fences:
             "agent": "codeplan",
             "state": "complete",
             "message": (
-                f"Mapped {len(scan['files'])} files. "
-                f"Stack: {', '.join(scan['tech_stack']) or 'unknown'}. "
+                f"Stack: {parsed.get('tech_stack', ', '.join(scan['tech_stack']) or 'unknown')}. "
                 f"Plan: {len(parsed.get('plan', []))} steps."
             ),
         },

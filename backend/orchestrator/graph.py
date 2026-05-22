@@ -1,6 +1,9 @@
 """
 LangGraph orchestrator — central nervous system.
-Routes: codeplan -> parsel -> swe_agent -> autocoderover -> [done|loop|hitl]
+Routes: codeplan -> [parsel|swe_agent] -> swe_agent -> autocoderover -> [done|hitl]
+
+Smart routing: Parsel is SKIPPED for simple tasks (≤3 plan steps).
+This saves 3-5 minutes of unnecessary decomposition.
 
 HITL note: graph is compiled with interrupt_before=["hitl"], meaning the graph
 PAUSES before hitl_node executes. The HITL broadcast must therefore happen in
@@ -20,6 +23,7 @@ from backend.broadcast import broadcast as _broadcast
 
 
 MAX_STEPS = 50
+PARSEL_THRESHOLD = 4  # Skip Parsel if plan has ≤ this many steps
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -107,6 +111,19 @@ def hitl_node(state: VantageState) -> dict:
 
 # ── Routing ────────────────────────────────────────────────────────────────
 
+def route_after_codeplan(state: VantageState) -> Literal["parsel", "swe_agent"]:
+    """Skip Parsel for simple tasks — go straight to SWE-Agent."""
+    plan = state.get("execution_plan", [])
+    if len(plan) <= PARSEL_THRESHOLD:
+        _broadcast({
+            "agent": "parsel",
+            "state": "complete",
+            "message": f"Skipped — plan is simple ({len(plan)} steps).",
+        })
+        return "swe_agent"
+    return "parsel"
+
+
 def route_after_agent(state: VantageState) -> Literal["hitl", "autocoderover", "end"]:
     if state.get("step_count", 0) >= MAX_STEPS:
         _broadcast({"agent": "orchestrator", "state": "error", "message": "Max steps reached."})
@@ -165,7 +182,12 @@ def build_graph(checkpointer=None) -> StateGraph:
 
     graph.set_entry_point("codeplan")
 
-    graph.add_edge("codeplan", "parsel")
+    # Smart routing: skip Parsel for simple tasks
+    graph.add_conditional_edges(
+        "codeplan",
+        route_after_codeplan,
+        {"parsel": "parsel", "swe_agent": "swe_agent"},
+    )
     graph.add_edge("parsel", "swe_agent")
 
     graph.add_conditional_edges(

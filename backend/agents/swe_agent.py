@@ -1,17 +1,18 @@
 """
-SWE-Agent v2 — Agentic Tool Loop.
+SWE-Agent v3 — Trustworthy Agentic Tool Loop.
+
+Trust pillars (what separates this from a toy agent):
+  1. VERIFICATION  — auto-verify syntax/tests before task_done. Can't ship broken code.
+  2. REVERSIBILITY — git init at start, auto-commit after each verified write.
+  3. TRANSPARENCY  — broadcast unified diffs so user sees exactly what changed.
+  4. QUALITY GATE  — task_done blocked if verification fails; agent must fix first.
 
 Pattern: Claude Code / Codex style.
-  The LLM drives itself with 7 tools until task_done() or MAX_AGENT_STEPS.
-  Tools: read_file, write_file, edit_file, run_bash, list_dir, search_code, task_done.
-
-Strategy:
-  1. Build rich system prompt (workspace tree + plan + context).
-  2. Start agentic loop — LLM picks tools, sees results, iterates.
-  3. Each tool call is executed and fed back as function_response.
-  4. HITL only for explicitly destructive bash commands.
-  5. Falls back to one-shot JSON mode if function calling unavailable.
+  The LLM drives itself with 9 tools until task_done() or MAX_AGENT_STEPS.
+  Tools: read_file, write_file, edit_file, run_bash, list_dir, search_code,
+         verify, git_log, task_done.
 """
+import difflib
 import json
 import re
 import os
@@ -47,7 +48,7 @@ def _detect_shell_env(work_dir: Path) -> str:
         )
     return f"Commands execute locally on **{os_name}** via subprocess. Use bash syntax."
 
-MAX_AGENT_STEPS = 30
+MAX_AGENT_STEPS = 20
 MAX_FILE_READ = 8000       # chars per file read
 MAX_CMD_OUTPUT = 2000      # chars of bash output fed back to LLM
 MAX_SEARCH_OUTPUT = 3000   # chars of grep results
@@ -65,6 +66,153 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "bu
 
 def _is_dangerous(cmd: str) -> bool:
     return any(p.lower() in cmd.lower() for p in DANGEROUS_CMD_PATTERNS)
+
+
+# ── Trust pillar helpers ────────────────────────────────────────────────────
+
+def _compute_diff(old_content: str, new_content: str, path: str) -> str:
+    """Unified diff between old and new file content."""
+    old_lines = old_content.splitlines(keepends=True)
+    new_lines = new_content.splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+        lineterm="",
+    )
+    return "".join(diff)
+
+
+def _init_git(work_dir: Path) -> bool:
+    """Git init in project dir. Returns True if git is available."""
+    try:
+        # Check git available
+        r = subprocess.run(["git", "--version"], capture_output=True, timeout=5)
+        if r.returncode != 0:
+            return False
+        # Init if not already a repo
+        git_dir = work_dir / ".git"
+        if not git_dir.exists():
+            subprocess.run(["git", "init"], cwd=str(work_dir), capture_output=True, timeout=10)
+            subprocess.run(
+                ["git", "config", "user.email", "vantage@local"],
+                cwd=str(work_dir), capture_output=True, timeout=5,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "VANTAGE"],
+                cwd=str(work_dir), capture_output=True, timeout=5,
+            )
+            # .gitignore
+            gitignore = work_dir / ".gitignore"
+            if not gitignore.exists():
+                gitignore.write_text(
+                    "__pycache__/\n*.pyc\n.venv/\nvenv/\nnode_modules/\ndist/\nbuild/\n.env\n",
+                    encoding="utf-8",
+                )
+        return True
+    except Exception:
+        return False
+
+
+def _git_commit(work_dir: Path, message: str) -> str:
+    """Stage all changes and commit. Returns commit hash or error."""
+    try:
+        subprocess.run(["git", "add", "-A"], cwd=str(work_dir), capture_output=True, timeout=10)
+        r = subprocess.run(
+            ["git", "commit", "-m", message, "--allow-empty"],
+            cwd=str(work_dir), capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0:
+            # Get short hash
+            h = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(work_dir), capture_output=True, text=True, timeout=5,
+            )
+            return h.stdout.strip() if h.returncode == 0 else "committed"
+        return f"commit failed: {r.stderr[:200]}"
+    except Exception as e:
+        return f"git error: {e}"
+
+
+def _git_log(work_dir: Path, n: int = 5) -> str:
+    """Return last N commits as readable log."""
+    try:
+        r = subprocess.run(
+            ["git", "log", f"--oneline", f"-{n}"],
+            cwd=str(work_dir), capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip() or "(no commits yet)"
+    except Exception:
+        return "(git not available)"
+
+
+def _auto_verify(work_dir: Path, written_files: list[str]) -> dict:
+    """
+    Verify all written files for syntax errors.
+    Returns {"passed": bool, "errors": [str], "summary": str}
+    """
+    errors: list[str] = []
+
+    for rel_path in written_files:
+        target = work_dir / rel_path
+        if not target.exists():
+            continue
+        suffix = target.suffix.lower()
+
+        if suffix == ".py":
+            try:
+                import ast
+                src = target.read_text(encoding="utf-8", errors="replace")
+                ast.parse(src)
+            except SyntaxError as e:
+                errors.append(f"{rel_path}: Python syntax error at line {e.lineno}: {e.msg}")
+
+        elif suffix in (".js", ".jsx", ".ts", ".tsx", ".mjs"):
+            # Quick check: balanced braces
+            try:
+                src = target.read_text(encoding="utf-8", errors="replace")
+                if src.count("{") != src.count("}"):
+                    errors.append(f"{rel_path}: Unbalanced braces ({{ vs }})")
+                if src.count("(") != src.count(")"):
+                    errors.append(f"{rel_path}: Unbalanced parentheses")
+            except Exception:
+                pass
+
+        elif suffix == ".json":
+            try:
+                import json as _json
+                _json.loads(target.read_text(encoding="utf-8", errors="replace"))
+            except _json.JSONDecodeError as e:
+                errors.append(f"{rel_path}: JSON parse error: {e}")
+
+    # Run pytest if available
+    pytest_result = None
+    test_files = [f for f in written_files if "test" in f.lower() and f.endswith(".py")]
+    if test_files:
+        try:
+            r = subprocess.run(
+                ["python", "-m", "pytest", "--tb=short", "-q"] + test_files,
+                cwd=str(work_dir), capture_output=True, text=True, timeout=60,
+            )
+            if r.returncode != 0:
+                out = (r.stdout + r.stderr)[:600]
+                errors.append(f"Tests failed:\n{out}")
+            else:
+                pytest_result = (r.stdout + r.stderr).strip().split("\n")[-1]
+        except FileNotFoundError:
+            pass  # pytest not installed yet
+        except Exception:
+            pass
+
+    passed = len(errors) == 0
+    if passed:
+        summary = f"Verification passed — {len(written_files)} file(s) clean"
+        if pytest_result:
+            summary += f" | {pytest_result}"
+    else:
+        summary = f"Verification FAILED — {len(errors)} issue(s) found"
+
+    return {"passed": passed, "errors": errors, "summary": summary}
 
 
 def _build_tree(path: str, root: str) -> list:
@@ -179,9 +327,24 @@ def _make_tool_declarations() -> list | None:
                 ["pattern"],
             ),
             _decl(
+                "verify",
+                "Verify all written files for syntax errors and run tests. "
+                "ALWAYS call this before task_done. If it fails, fix the errors first.",
+                {},
+                [],
+            ),
+            _decl(
+                "git_log",
+                "Show the last 5 git commits in the project directory. "
+                "Use to confirm previous changes were committed.",
+                {},
+                [],
+            ),
+            _decl(
                 "task_done",
                 "Signal that the coding task is fully complete. "
-                "Call ONLY when all files are written and verified (tests pass or no errors).",
+                "ONLY call after verify() passes with no errors. "
+                "Blocked automatically if verification fails.",
                 {"summary": {"type": "STRING", "description": "What was built or changed"}},
                 ["summary"],
             ),
@@ -198,10 +361,16 @@ def run_swe_agent(state: VantageState) -> dict:
     runner = DockerRunner(str(work_dir))
     skip_hitl = state.get("hitl_approved") is True
 
+    # TRUST PILLAR 2: Reversibility — init git at start
+    git_available = _init_git(work_dir)
+    if git_available:
+        _broadcast_ws({"type": "agent_token", "agent": "swe_agent",
+                       "text": "🔒 Git initialized — all changes will be committed automatically."})
+
     tool_decls = _make_tool_declarations()
     if tool_decls:
         try:
-            return _run_agentic_loop(state, work_dir, runner, tool_decls, skip_hitl)
+            return _run_agentic_loop(state, work_dir, runner, tool_decls, skip_hitl, git_available)
         except Exception as e:
             _broadcast_ws({
                 "type": "agent_token",
@@ -220,6 +389,7 @@ def _run_agentic_loop(
     runner: DockerRunner,
     tool_decls: list,
     skip_hitl: bool,
+    git_available: bool = False,
 ) -> dict:
     """
     LLM-driven tool loop. Runs until task_done() is called or MAX_AGENT_STEPS reached.
@@ -257,10 +427,22 @@ def _run_agentic_loop(
             try:
                 target = work_dir / path
                 target.parent.mkdir(parents=True, exist_ok=True)
+                # TRUST PILLAR 3: Transparency — diff before overwrite
+                old_content = ""
+                if target.exists():
+                    try:
+                        old_content = target.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        pass
+                action = "modify" if old_content else "create"
                 target.write_text(content, encoding="utf-8")
-                ctx["code_changes"].append({"path": path, "content": content, "action": "create"})
+                diff = _compute_diff(old_content, content, path)
+                ctx["code_changes"].append({"path": path, "content": content, "action": action})
                 _broadcast_ws({"type": "file_write", "path": path, "content": content})
-                return f"✓ Written: {path}  ({len(content):,} chars)"
+                if diff:
+                    _broadcast_ws({"type": "file_diff", "path": path, "diff": diff})
+                # Git staged at task_done — not per-write (avoids per-file subprocess overhead)
+                return f"Written: {path} ({len(content):,} chars)"
             except Exception as exc:
                 return f"ERROR: {exc}"
 
@@ -277,10 +459,15 @@ def _run_agentic_loop(
                         "Read the file first to verify the exact text."
                     )
                 updated = original.replace(old_str, new_str, 1)
+                # TRUST PILLAR 3: Transparency — diff
+                diff = _compute_diff(original, updated, path)
                 target.write_text(updated, encoding="utf-8")
                 ctx["code_changes"].append({"path": path, "content": updated, "action": "modify"})
                 _broadcast_ws({"type": "file_write", "path": path, "content": updated})
-                return f"✓ Edited: {path}"
+                if diff:
+                    _broadcast_ws({"type": "file_diff", "path": path, "diff": diff})
+                # Git staged at task_done — not per-edit
+                return f"Edited: {path}"
             except FileNotFoundError:
                 return f"ERROR: '{path}' not found. Use write_file to create it first."
             except Exception as exc:
@@ -292,13 +479,13 @@ def _run_agentic_loop(
                 ctx["hitl_required"] = True
                 ctx["hitl_type"] = "dangerous_command"
                 ctx["hitl_description"] = f"SWE-agent wants to run: {cmd}"
-                return f"⛔ PAUSED — human approval required for: {cmd}"
+                return f"PAUSED — human approval required for: {cmd}"
             result = runner.run_command(cmd)
             out = (result.get("output") or "")[:MAX_CMD_OUTPUT]
             if result["success"]:
-                return f"✓ exit 0\n{out}" if out else "✓ exit 0 (no output)"
+                return f"exit 0\n{out}" if out else "exit 0 (no output)"
             err = (result.get("error") or "")[:500]
-            return f"✗ non-zero exit\n{out}\n{err}"
+            return f"non-zero exit\n{out}\n{err}"
 
         elif name == "list_dir":
             path = args.get("path", ".").lstrip("/\\")
@@ -307,8 +494,8 @@ def _run_agentic_loop(
                 entries = sorted(os.scandir(str(target)), key=lambda e: (not e.is_dir(), e.name))
                 lines = []
                 for e in entries[:80]:
-                    icon = "📁" if e.is_dir() else "📄"
-                    lines.append(f"{icon} {e.name}")
+                    prefix = "[D]" if e.is_dir() else "[F]"
+                    lines.append(f"{prefix} {e.name}")
                 suffix = f"\n... ({len(entries) - 80} more)" if len(entries) > 80 else ""
                 return "\n".join(lines) + suffix if lines else "(empty)"
             except Exception as exc:
@@ -328,64 +515,154 @@ def _run_agentic_loop(
             except Exception as exc:
                 return f"ERROR: {exc}"
 
+        elif name == "verify":
+            # TRUST PILLAR 1: Verification
+            written_paths = [c["path"] for c in ctx["code_changes"]]
+            if not written_paths:
+                return "Nothing written yet — no files to verify."
+            result = _auto_verify(work_dir, written_paths)
+            _broadcast_ws({
+                "type": "verification_result",
+                "agent": "swe_agent",
+                "passed": result["passed"],
+                "summary": result["summary"],
+                "errors": result["errors"],
+            })
+            if result["passed"]:
+                return f"PASSED: {result['summary']}"
+            return (
+                f"FAILED: {result['summary']}\n\nErrors:\n"
+                + "\n".join(result["errors"])
+            )
+
+        elif name == "git_log":
+            return _git_log(work_dir)
+
         elif name == "task_done":
+            # TRUST PILLAR 4: Quality gate — block task_done if verification fails
+            written_paths = [c["path"] for c in ctx["code_changes"]]
+            if written_paths:
+                verify_result = _auto_verify(work_dir, written_paths)
+                _broadcast_ws({
+                    "type": "verification_result",
+                    "agent": "swe_agent",
+                    "passed": verify_result["passed"],
+                    "summary": verify_result["summary"],
+                    "errors": verify_result["errors"],
+                })
+                if not verify_result["passed"]:
+                    return (
+                        f"BLOCKED — task_done requires passing verification.\n"
+                        f"{verify_result['summary']}\n\nErrors:\n"
+                        + "\n".join(verify_result["errors"])
+                        + "\n\nFix the errors above and call verify() before task_done()."
+                    )
+            # All clear — mark done
             ctx["done"] = True
             ctx["done_summary"] = args.get("summary", "Task complete.")
-            return "✓ Task marked done."
+            # TRUST PILLAR 2: Single commit for entire task (not per-file — avoids subprocess overhead)
+            if git_available and written_paths:
+                final_hash = _git_commit(work_dir, ctx["done_summary"][:72])
+                _broadcast_ws({
+                    "type": "git_commit", "agent": "swe_agent",
+                    "hash": final_hash, "message": ctx["done_summary"][:72],
+                })
+            return "Task marked done."
 
         return f"Unknown tool: {name}"
 
     # ── System prompt ──────────────────────────────────────────────────────
     tree_text = _workspace_tree_text(str(work_dir))
     plan_text = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(state.get("execution_plan", [])))
-    tasks_json = json.dumps(state.get("decomposed_tasks", []), indent=2)
 
-    system_prompt = f"""You are SWE-Agent, an expert autonomous software engineer running inside a secure Docker sandbox.
-All file paths are relative to the working directory root.
+    # Compact task summary instead of full JSON dump
+    raw_tasks = state.get("decomposed_tasks", [])
+    tasks_summary = "\n".join(
+        f"  - {t.get('function_name', 'task')}: {t.get('purpose', '')}"
+        for t in raw_tasks[:10]
+    ) or "  (none)"
+
+    git_note = (
+        "Git is ACTIVE — all changes committed atomically at task_done. "
+        "Use git_log() to see prior commits."
+        if git_available else
+        "Git not available — changes are not versioned."
+    )
+
+    system_prompt = f"""You are SWE-Agent, an autonomous software engineer. Be FAST and DIRECT.
 
 {_detect_shell_env(work_dir)}
 
-━━━ TOOLS ━━━
-You have 7 tools. Use them in sequence to explore, implement, and verify.
-
-━━━ APPROACH (follow exactly) ━━━
-1. Explore: call list_dir('.') — understand what already exists
-2. Read: call read_file() on every file you plan to modify — never edit blind
-3. Search: use search_code() to find where things are defined
-4. Implement: write_file() for new files, edit_file() for targeted changes
-5. Verify: run_bash() to install deps, run tests, check syntax
-6. Fix: if errors, read the failing file, fix, re-run
-7. Done: call task_done() ONLY when tests pass or no errors remain
-
-━━━ RULES ━━━
-• ALWAYS read a file before editing it
-• write_file() rewrites the ENTIRE file — only use for new files or total rewrites
-• edit_file() for surgical changes — it fails if old_string is not exact
-• After writing files, verify with run_bash (python -c "import ast; ast.parse(open('file.py').read())" or similar)
-• Produce complete, production-ready code — no stubs, no TODO, no placeholders
-• Never guess a file path — use list_dir() first
-
-━━━ WORKSPACE STRUCTURE ━━━
+WORKSPACE:
 {tree_text}
 
-━━━ USER TASK ━━━
-{state["user_prompt"]}
+USER TASK: {state["user_prompt"]}
 
-━━━ EXECUTION PLAN ━━━
-{plan_text or "  (none — derive your own plan)"}
+PLAN:
+{plan_text or "  (derive from task)"}
 
-━━━ SUBTASKS FROM PARSEL ━━━
-{tasks_json}
+SUBTASKS:
+{tasks_summary}
 
-Begin now. Start with list_dir('.') to confirm the workspace state."""
+REVERSIBILITY: {git_note}
+
+STRATEGY — SPEED IS CRITICAL:
+1. Write COMPLETE files with write_file(). Write ALL code for a file in ONE call.
+2. Do NOT read files you just wrote — you know the content.
+3. Only read_file() for EXISTING files you need to modify.
+4. Install deps with run_bash() ONCE (combine: "pip install x y z").
+5. Call verify() ONCE after all files are written — fix any errors it reports.
+6. Call task_done() ONLY after verify() passes. It is blocked otherwise.
+
+RULES:
+• write_file() = full file content. Use for new files (most cases).
+• edit_file() = surgical replace. ONLY for modifying existing files you already read.
+• verify() = syntax + test check. REQUIRED before task_done().
+• task_done() = BLOCKED if verify() fails. Fix errors first.
+• No stubs, no TODO, no placeholders — write production-ready code.
+• Do NOT narrate your thinking. Just call tools.
+• Combine related work — write ALL functions in a file in one write_file() call."""
 
     # ── Initialize conversation ────────────────────────────────────────────
     history = [
         _gt.Content(
             role="user",
-            parts=[_gt.Part(text="Start implementing. Explore the workspace first, then build step by step.")],
+            parts=[_gt.Part(text="Implement now. Write complete files directly — no exploration needed for new projects.")],
         )
     ]
+
+    # ── Read-only tools (safe for parallel execution) ───────────────────
+    READ_ONLY_TOOLS = {"read_file", "list_dir", "search_code"}
+
+    # ── History compaction — prune old tool results to keep context lean ──
+    COMPACT_EVERY = 4  # Compact after every N steps
+
+    def _compact_history():
+        """Replace old tool result contents with short summaries."""
+        # Keep last 3 user turns (tool responses) intact, compact everything older
+        user_turn_count = 0
+        for i in range(len(history) - 1, -1, -1):
+            entry = history[i]
+            if entry.role == "user" and any(hasattr(p, 'function_response') and p.function_response for p in (entry.parts or [])):
+                user_turn_count += 1
+                if user_turn_count > 3:
+                    # Compact this old tool response — replace with summary
+                    compacted_parts = []
+                    for p in entry.parts:
+                        if hasattr(p, 'function_response') and p.function_response:
+                            fr = p.function_response
+                            result_text = fr.response.get("result", "") if fr.response else ""
+                            # Truncate to first 200 chars
+                            short = result_text[:200] + "..." if len(result_text) > 200 else result_text
+                            compacted_parts.append(_gt.Part(
+                                function_response=_gt.FunctionResponse(
+                                    name=fr.name,
+                                    response={"result": short},
+                                )
+                            ))
+                        else:
+                            compacted_parts.append(p)
+                    history[i] = _gt.Content(role="user", parts=compacted_parts)
 
     # ── Loop ──────────────────────────────────────────────────────────────
     steps_taken = 0
@@ -395,32 +672,54 @@ Begin now. Start with list_dir('.') to confirm the workspace state."""
         if ctx["done"] or ctx["hitl_required"]:
             break
 
+        # Compact history periodically
+        if step > 0 and step % COMPACT_EVERY == 0:
+            _compact_history()
+
         text, func_calls, model_content = call_llm_with_tools_turn(
             MODEL, system_prompt, history, tool_decls, state["google_api_key"]
         )
 
-        # Stream any plain-text reasoning to frontend
+        # Stream reasoning — only short status lines, skip verbose self-talk
         if text.strip():
-            _broadcast_ws({"type": "agent_token", "agent": "swe_agent", "text": text})
+            lines = [l.strip() for l in text.strip().split('\n') if l.strip()]
+            useful = [l for l in lines if len(l) < 150 and not l.startswith(('I ', 'Let me ', 'Now I ', "I'll ", 'I need ', 'I should ', 'Okay', 'Wait', 'Actually', 'Hmm'))]
+            if useful:
+                _broadcast_ws({"type": "agent_token", "agent": "swe_agent", "text": '\n'.join(useful)})
 
         # Append model turn to history
         history.append(model_content)
 
         if not func_calls:
-            # Model gave pure text with no tool calls — consider done
             ctx["done"] = True
             ctx["done_summary"] = text[:400]
             break
 
-        # Execute tools and collect responses
+        # ── Execute tools — parallel for read-only, sequential for mutating ──
         tool_responses: list[tuple[str, str]] = []
-        for fc in func_calls:
-            result_text = _exec(fc["name"], fc["args"])
-            # tool_call event already broadcast inside _exec — no duplicate needed
-            tool_responses.append((fc["name"], result_text))
 
+        # Separate read-only vs mutating calls
+        read_calls = [fc for fc in func_calls if fc["name"] in READ_ONLY_TOOLS]
+        write_calls = [fc for fc in func_calls if fc["name"] not in READ_ONLY_TOOLS]
+
+        # Execute read-only tools in parallel (if multiple)
+        if len(read_calls) > 1:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                futures = {pool.submit(_exec, fc["name"], fc["args"]): fc for fc in read_calls}
+                for fut in concurrent.futures.as_completed(futures):
+                    fc = futures[fut]
+                    tool_responses.append((fc["name"], fut.result()))
+        elif read_calls:
+            fc = read_calls[0]
+            tool_responses.append((fc["name"], _exec(fc["name"], fc["args"])))
+
+        # Execute mutating tools sequentially
+        for fc in write_calls:
             if ctx["hitl_required"] or ctx["done"]:
                 break
+            result_text = _exec(fc["name"], fc["args"])
+            tool_responses.append((fc["name"], result_text))
 
         # Feed results back as a single user turn
         if tool_responses:

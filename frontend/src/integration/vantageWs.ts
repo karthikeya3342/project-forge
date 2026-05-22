@@ -43,6 +43,154 @@ const STATE_MAP: Record<string, AgentState> = {
   waiting_approval: 'on_hold',
 };
 
+// ── Format raw agent output for readable chat display ─────────────────────
+
+function formatAgentOutput(agentName: string, raw: string): string {
+  const trimmed = raw.trim();
+
+  // ── CodePlan: JSON with project_name + plan array ──────────────────────
+  if (agentName === 'codeplan') {
+    try {
+      const match = trimmed.match(/\{[\s\S]*\}/);
+      if (match) {
+        const obj = JSON.parse(match[0]);
+        const lines: string[] = [];
+        if (obj.project_name) {
+          lines.push(`📁 **Project:** \`${obj.project_name}\``);
+        }
+        if (Array.isArray(obj.plan) && obj.plan.length) {
+          lines.push('', '**Execution Plan**');
+          obj.plan.forEach((step: string, i: number) => {
+            // Strip leading "Step N:" if present
+            const clean = step.replace(/^Step\s*\d+:\s*/i, '');
+            lines.push(`${i + 1}. ${clean}`);
+          });
+        }
+        if (Array.isArray(obj.risky_overwrites) && obj.risky_overwrites.length) {
+          lines.push('', `⚠️ **May overwrite:** ${obj.risky_overwrites.map((f: string) => `\`${f}\``).join(', ')}`);
+        }
+        if (lines.length) return lines.join('\n');
+      }
+    } catch { /* not JSON — fall through */ }
+  }
+
+  // ── Parsel: JSON array of decomposed tasks ─────────────────────────────
+  if (agentName === 'parsel') {
+    try {
+      // Could be raw array or wrapped in JSON object
+      const match = trimmed.match(/\[[\s\S]*\]/);
+      if (match) {
+        const tasks = JSON.parse(match[0]) as Array<{
+          function_name?: string;
+          purpose?: string;
+          signature?: string;
+          base_case?: boolean;
+          depends_on?: string[];
+        }>;
+        if (tasks.length && tasks[0].function_name) {
+          const lines = ['**Decomposed Tasks**', ''];
+          tasks.forEach((t, i) => {
+            const icon = t.base_case ? '🟢' : '🔗';
+            lines.push(`${icon} **${i + 1}. \`${t.function_name}\`** — ${t.purpose ?? ''}`);
+            if (t.signature) {
+              lines.push(`   \`${t.signature}\``);
+            }
+            if (t.depends_on?.length) {
+              lines.push(`   ↳ depends on: ${t.depends_on.map(d => `\`${d}\``).join(', ')}`);
+            }
+          });
+          return lines.join('\n');
+        }
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ── AutoCodeRover: JSON with approved, issues, summary, patches ────────
+  if (agentName === 'autocoderover') {
+    try {
+      const match = trimmed.match(/\{[\s\S]*\}/);
+      if (match) {
+        const obj = JSON.parse(match[0]);
+        if ('approved' in obj || 'issues' in obj || 'summary' in obj) {
+          const lines: string[] = [];
+          const passed = obj.approved !== false && (!obj.issues || obj.issues.length === 0);
+          lines.push(passed ? '✅ **Code Review: Passed**' : '⚠️ **Code Review: Issues Found**');
+          if (obj.summary) {
+            lines.push('', obj.summary);
+          }
+          if (Array.isArray(obj.issues) && obj.issues.length) {
+            lines.push('', '**Issues:**');
+            obj.issues.forEach((issue: string) => {
+              lines.push(`- ${issue}`);
+            });
+          }
+          if (Array.isArray(obj.patches) && obj.patches.length) {
+            lines.push('', `🔧 **Auto-patched ${obj.patches.length} file(s)**`);
+            obj.patches.forEach((p: { path?: string }) => {
+              if (p.path) lines.push(`  - \`${p.path}\``);
+            });
+          }
+          return lines.join('\n');
+        }
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ── SWE-Agent: streamed tool calls + reasoning ─────────────────────────
+  if (agentName === 'swe_agent') {
+    // Keep tool call lines (backtick format) and meaningful output.
+    // Strip verbose self-talk / reasoning filler.
+    const lines = trimmed.split('\n');
+    const kept: string[] = [];
+    for (const line of lines) {
+      const t = line.trim();
+      // Keep tool call backtick lines
+      if (t.startsWith('`') && t.includes('(')) {
+        kept.push(t);
+        continue;
+      }
+      // Keep lines with file paths or code-related content
+      if (t.match(/^(Created|Modified|Wrote|Read|Edited|Deleted|Running|Error|Warning|✓|✗|→|─)/i)) {
+        kept.push(t);
+        continue;
+      }
+      // Keep short meaningful lines (skip long reasoning blocks)
+      if (t.length > 0 && t.length < 120 && !t.match(/^(I |Let me |Now I |I'll |I need to |I should |I want to |I will |Okay|Ok,|Alright|Let's|Next,|First,|Then )/i)) {
+        kept.push(t);
+      }
+    }
+    if (kept.length) {
+      return kept.join('\n');
+    }
+  }
+
+  // ── Fallback: try generic JSON formatting ──────────────────────────────
+  try {
+    const match = trimmed.match(/\{[\s\S]*\}/);
+    if (match) {
+      const obj = JSON.parse(match[0]);
+      // Format known fields nicely
+      const lines: string[] = [];
+      for (const [key, val] of Object.entries(obj)) {
+        if (Array.isArray(val)) {
+          lines.push(`**${key}:**`);
+          (val as unknown[]).forEach((item) => {
+            lines.push(`- ${typeof item === 'string' ? item : JSON.stringify(item)}`);
+          });
+        } else if (typeof val === 'string') {
+          lines.push(`**${key}:** ${val}`);
+        } else if (typeof val === 'boolean') {
+          lines.push(`**${key}:** ${val ? '✅' : '❌'}`);
+        }
+      }
+      if (lines.length) return lines.join('\n');
+    }
+  } catch { /* not JSON */ }
+
+  // Raw text — return as-is
+  return trimmed;
+}
+
 let socket: WebSocket | null = null;
 
 export function connectVantageWs() {
@@ -110,6 +258,49 @@ export function connectVantageWs() {
         setTimeout(() => {
           useVantageStore.getState().setModifyingFile(path, false);
         }, 2000);
+      }
+
+      // TRUST PILLAR 3: File diff — show exactly what changed
+      if (type === 'file_diff') {
+        const path = packet.path as string;
+        const diff = packet.diff as string;
+        if (diff) {
+          const lines = diff.split('\n');
+          // Truncate very large diffs to first 60 lines
+          const truncated = lines.length > 60
+            ? lines.slice(0, 60).join('\n') + `\n… (+${lines.length - 60} more lines)`
+            : diff;
+          core.appendAgentHistory(1, 'assistant', [
+            `**[SWE-Agent]** \`${path}\`\n\`\`\`diff\n${truncated}\n\`\`\``,
+          ]);
+        }
+      }
+
+      // TRUST PILLAR 1: Verification result — pass/fail in chat
+      if (type === 'verification_result') {
+        const passed = packet.passed as boolean;
+        const summary = packet.summary as string;
+        const errors = (packet.errors as string[]) ?? [];
+        if (passed) {
+          core.appendAgentHistory(1, 'assistant', [
+            `**[SWE-Agent]** ✅ **Verification passed** — ${summary}`,
+          ]);
+        } else {
+          const errLines = errors.slice(0, 5).map((e) => `- ${e}`).join('\n');
+          const more = errors.length > 5 ? `\n- … (+${errors.length - 5} more)` : '';
+          core.appendAgentHistory(1, 'assistant', [
+            `**[SWE-Agent]** ❌ **Verification failed**\n${summary}\n\n${errLines}${more}`,
+          ]);
+        }
+      }
+
+      // TRUST PILLAR 2: Git commit — compact one-liner in chat
+      if (type === 'git_commit') {
+        const hash = packet.hash as string;
+        const gitMsg = packet.message as string;
+        core.appendAgentHistory(1, 'assistant', [
+          `**[SWE-Agent]** 🔒 \`${hash}\` — ${gitMsg}`,
+        ]);
       }
 
       // File tree update
@@ -181,11 +372,12 @@ export function connectVantageWs() {
               core.approveTask(taskId);
               delete activeTaskIds[agentName];
             }
-            // Flush streamed LLM output as a chat message
+            // Flush streamed LLM output as a formatted chat message
             const streamed = useVantageStore.getState().streamingText;
             if (streamed) {
+              const formatted = formatAgentOutput(agentName, streamed);
               core.appendAgentHistory(1, 'assistant', [
-                `**[${label}]**\n\n${streamed}`,
+                `**[${label}]**\n\n${formatted}`,
               ]);
               useVantageStore.getState().clearStreamingText();
             }
@@ -214,8 +406,9 @@ export function connectVantageWs() {
         const hitlStream = useVantageStore.getState().streamingText;
         if (hitlStream) {
           const hitlAgent = useVantageStore.getState().streamingAgent;
+          const hitlFormatted = formatAgentOutput(hitlAgent, hitlStream);
           core.appendAgentHistory(1, 'assistant', [
-            `**[${AGENT_LABEL[hitlAgent] ?? hitlAgent}]**\n\n${hitlStream}`,
+            `**[${AGENT_LABEL[hitlAgent] ?? hitlAgent}]**\n\n${hitlFormatted}`,
           ]);
           useVantageStore.getState().clearStreamingText();
         }
@@ -242,8 +435,9 @@ export function connectVantageWs() {
         const remainingStream = useVantageStore.getState().streamingText;
         if (remainingStream) {
           const streamAgent = useVantageStore.getState().streamingAgent;
+          const doneFormatted = formatAgentOutput(streamAgent, remainingStream);
           core.appendAgentHistory(1, 'assistant', [
-            `**[${AGENT_LABEL[streamAgent] ?? streamAgent}]**\n\n${remainingStream}`,
+            `**[${AGENT_LABEL[streamAgent] ?? streamAgent}]**\n\n${doneFormatted}`,
           ]);
           useVantageStore.getState().clearStreamingText();
         }

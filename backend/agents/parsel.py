@@ -23,30 +23,31 @@ def run_parsel(state: VantageState) -> dict:
         f"{i + 1}. {step}" for i, step in enumerate(state.get("execution_plan", []))
     )
 
-    prompt = f"""You are Parsel, an algorithmic decomposer for an AI coding system.
+    prompt = f"""You are Parsel, a task decomposer for an AI coding system.
 
 User task: {state["user_prompt"]}
 
 Execution plan from CodePlan:
 {plan_text}
 
-Decompose EACH plan step into the smallest possible helper functions.
-Rules:
-- Write base cases FIRST (leaf functions with no internal dependencies).
-- Each task must be independently testable.
-- No function should be longer than 20 lines.
+Break the plan into implementation tasks for the SWE-Agent. Each task = one logical unit of work (usually one file or one major feature).
+
+RULES:
+- Generate 3-8 tasks MAX. Fewer is better. Combine related functions into one task.
+- Each task describes WHAT to build, not individual functions.
+- Base cases first (utilities, data models), then features, then integration/tests.
+- Do NOT create a separate task for every tiny function. Group by file or feature.
 
 Respond as a JSON array:
 [
   {{
     "step_index": 0,
-    "function_name": "helper_name",
-    "signature": "def helper_name(args) -> return_type",
-    "purpose": "one sentence",
+    "function_name": "core_data_layer",
+    "signature": "File: src/models.py",
+    "purpose": "Create data models and persistence logic",
     "base_case": true,
     "depends_on": []
-  }},
-  ...
+  }}
 ]"""
 
     text = _call_llm(prompt, state["google_api_key"])
