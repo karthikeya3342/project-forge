@@ -25,6 +25,28 @@ from backend.broadcast import broadcast as _broadcast_ws
 from backend.agents.utils import call_llm, call_llm_with_tools_turn, make_tool_response_content
 
 MODEL = "gemma-4-26b-a4b-it"
+
+
+def _detect_shell_env(work_dir: Path) -> str:
+    """Detect runtime shell so the LLM uses correct command syntax."""
+    import platform
+    runner = DockerRunner(str(work_dir))
+    docker_ok = runner._get_client() is not None
+    if docker_ok:
+        return (
+            "Commands execute inside a **Docker container** (Linux, bash shell). "
+            "Use standard bash syntax: ls, grep, cat, pip, python, npm, node."
+        )
+    os_name = platform.system()
+    if os_name == "Windows":
+        return (
+            "Commands execute locally on **Windows** via subprocess (no Docker). "
+            "Use cross-platform commands: python, pip, npm, node. "
+            "For file listing use: python -c \"import os; print(os.listdir('.'))\" "
+            "Avoid bash-only syntax (ls, grep, cat). Use python -c for complex ops."
+        )
+    return f"Commands execute locally on **{os_name}** via subprocess. Use bash syntax."
+
 MAX_AGENT_STEPS = 30
 MAX_FILE_READ = 8000       # chars per file read
 MAX_CMD_OUTPUT = 2000      # chars of bash output fed back to LLM
@@ -319,7 +341,9 @@ def _run_agentic_loop(
     tasks_json = json.dumps(state.get("decomposed_tasks", []), indent=2)
 
     system_prompt = f"""You are SWE-Agent, an expert autonomous software engineer running inside a secure Docker sandbox.
-Your working directory is /workspace. All file paths are relative to this root.
+All file paths are relative to the working directory root.
+
+{_detect_shell_env(work_dir)}
 
 ━━━ TOOLS ━━━
 You have 7 tools. Use them in sequence to explore, implement, and verify.

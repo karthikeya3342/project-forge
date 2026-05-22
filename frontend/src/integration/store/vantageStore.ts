@@ -45,6 +45,11 @@ interface VantageStoreState {
   streamingAgent: string;
   streamingText: string;
 
+  // 3D agent bubble text (real-time status over NPC heads)
+  agentBubbleText: Record<string, string>;
+  // Focused agent index (clicked NPC in VANTAGE mode)
+  focusedAgentIndex: number | null;
+
   // Actions
   setFileTree: (tree: FileNode[]) => void;
   setSelectedFilePath: (path: string | null) => void;
@@ -58,6 +63,9 @@ interface VantageStoreState {
   setDependencyMap: (map: Record<string, string[]>) => void;
   appendStreamingChunk: (agent: string, chunk: string) => void;
   clearStreamingText: () => void;
+  setAgentBubbleText: (agent: string, text: string) => void;
+  clearAgentBubbleText: (agent: string) => void;
+  setFocusedAgentIndex: (index: number | null) => void;
   reset: () => void;
 }
 
@@ -75,6 +83,9 @@ const INITIAL: Omit<
   | 'setDependencyMap'
   | 'appendStreamingChunk'
   | 'clearStreamingText'
+  | 'setAgentBubbleText'
+  | 'clearAgentBubbleText'
+  | 'setFocusedAgentIndex'
   | 'reset'
 > = {
   fileTree: [],
@@ -90,6 +101,8 @@ const INITIAL: Omit<
   dependencyMap: {},
   streamingAgent: '',
   streamingText: '',
+  agentBubbleText: {},
+  focusedAgentIndex: null,
 };
 
 export const useVantageStore = create<VantageStoreState>()((set) => ({
@@ -135,6 +148,18 @@ export const useVantageStore = create<VantageStoreState>()((set) => ({
     })),
 
   clearStreamingText: () => set({ streamingAgent: '', streamingText: '' }),
+
+  setAgentBubbleText: (agent, text) =>
+    set((s) => ({ agentBubbleText: { ...s.agentBubbleText, [agent]: text } })),
+
+  clearAgentBubbleText: (agent) =>
+    set((s) => {
+      const copy = { ...s.agentBubbleText };
+      delete copy[agent];
+      return { agentBubbleText: copy };
+    }),
+
+  setFocusedAgentIndex: (index) => set({ focusedAgentIndex: index }),
 
   reset: () =>
     set({

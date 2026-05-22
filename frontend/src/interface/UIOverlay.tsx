@@ -7,7 +7,13 @@ import InfoModal from './InfoModal';
 import { MessageSquareWarning, PartyPopper, Siren, Loader2 } from 'lucide-react';
 import { Task, useCoreStore } from '../integration/store/coreStore';
 import { useTeamStore, useActiveTeam } from '../integration/store/teamStore';
+import { useVantageStore } from '../integration/store/vantageStore';
 import { USER_COLOR, USER_COLOR_LIGHT, USER_COLOR_SOFT } from '../theme/brand';
+
+// VANTAGE: NPC index → backend agent name
+const VANTAGE_AGENT_NAMES: Record<number, string> = {
+  1: 'orchestrator', 2: 'codeplan', 3: 'parsel', 4: 'swe_agent', 5: 'autocoderover',
+};
 
 
 
@@ -96,6 +102,8 @@ const UIOverlay: React.FC = () => {
     isGeneratingAsset,
   } = useCoreStore();
   const system = useActiveTeam();
+  const { agentBubbleText } = useVantageStore();
+  const isVantage = system.id === 'vantage';
   const npcAgents = getAllAgents(system);
   const allPossibleAgents = getAllCharacters(system);
 
@@ -132,7 +140,7 @@ const UIOverlay: React.FC = () => {
                 }}
               />
             </div>
-            {/* Persistent "Working..." label — hides when hovered/selected (detailed bubble takes over) */}
+            {/* Persistent status label — shows real-time action in VANTAGE mode */}
             {hoveredNpcIndex !== agent.index && selectedNpcIndex !== agent.index && (
               <div
                 className="absolute pointer-events-none"
@@ -142,13 +150,15 @@ const UIOverlay: React.FC = () => {
                   transform: 'translate(-50%, -100%) translateY(-14px)',
                 }}
               >
-                <div className="bg-darkDelegation/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+                <div className="bg-darkDelegation/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 shadow-xl flex items-center gap-1.5 whitespace-nowrap max-w-[180px]">
                   <div
-                    className="w-1.5 h-1.5 rounded-full animate-pulse"
+                    className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0"
                     style={{ backgroundColor: agent.color ?? '#34d399' }}
                   />
-                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400">
-                    Working
+                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400 truncate">
+                    {(isVantage && agentBubbleText[VANTAGE_AGENT_NAMES[agent.index]])
+                      ? agentBubbleText[VANTAGE_AGENT_NAMES[agent.index]]
+                      : 'Working'}
                   </span>
                 </div>
               </div>

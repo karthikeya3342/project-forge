@@ -84,7 +84,7 @@ export function connectVantageWs() {
         return;
       }
 
-      // Tool call event — compact single-line indicator in stream
+      // Tool call event — compact indicator in stream + 3D bubble text
       if (type === 'tool_call') {
         const tool = packet.tool as string;
         const args = packet.args as Record<string, unknown>;
@@ -94,6 +94,9 @@ export function connectVantageWs() {
           agentName || 'swe_agent',
           `\n\`${tool}(${preview ? `"${preview}"` : ''})\``,
         );
+        // Update 3D bubble over NPC
+        const bubbleLabel = preview ? `${tool} · ${preview.split('/').pop()}` : tool;
+        vantage.setAgentBubbleText(agentName || 'swe_agent', bubbleLabel);
         return;
       }
 
@@ -128,12 +131,18 @@ export function connectVantageWs() {
         vantage.setConsoleTab('terminal');
       }
 
-      // Track current pipeline node
+      // Track current pipeline node + 3D bubble text
       if (agentName && state === 'working') {
         vantage.setCurrentNode(agentName);
+        vantage.setAgentBubbleText(agentName, message?.slice(0, 35) ?? 'Working…');
+      }
+      if (agentName && state === 'complete') {
+        vantage.clearAgentBubbleText(agentName);
       }
       if (type === 'pipeline_done' || type === 'pipeline_error') {
         vantage.setCurrentNode('');
+        // Clear all bubbles
+        Object.keys(vantage.agentBubbleText).forEach((k) => vantage.clearAgentBubbleText(k));
       }
 
       // ── 3D character animation ───────────────────────────────────────────

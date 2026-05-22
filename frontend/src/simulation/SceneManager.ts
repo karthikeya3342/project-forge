@@ -14,6 +14,7 @@ import { AgentSimulation } from './core/AgentSimulation';
 import { useCoreStore } from '../integration/store/coreStore';
 import { getActiveAgentSet, useTeamStore } from '../integration/store/teamStore';
 import { useUiStore } from '../integration/store/uiStore';
+import { useVantageStore } from '../integration/store/vantageStore';
 import { AgentBehavior, ChatMessage } from '../types';
 import { BUBBLE_Y_OFFSET } from './constants';
 
@@ -128,6 +129,42 @@ export class SceneManager {
       (id, label, pos) => useUiStore.getState().setHoveredPoi(id, label, pos),
       (id) => this.driverManager?.getPlayerDriver().onPoiClick(id),
       this.worldManager.getOffice() ?? undefined, (p) => this.navMesh.isPointOnNavMesh(p)
+    );
+
+    // ── VANTAGE: camera follow + desk walk for active pipeline agent ──
+    const VANTAGE_AGENT_IDX: Record<string, number> = {
+      codeplan: 2, parsel: 3, swe_agent: 4, autocoderover: 5,
+    };
+
+    this.unsubs.push(
+      useVantageStore.subscribe((s, prev) => {
+        if (s.currentNode !== prev.currentNode && this.controller) {
+          const set = getActiveAgentSet();
+          if (set.id !== 'vantage') return;
+
+          const idx = VANTAGE_AGENT_IDX[s.currentNode];
+          if (idx) {
+            // Camera follows active agent
+            this.selectedIndex = idx;
+            useUiStore.getState().setSelectedNpc(idx);
+            // Walk agent to their work desk
+            this.setNpcWorking(idx, true);
+          }
+
+          // Previous agent done — send back to spawn
+          const prevIdx = VANTAGE_AGENT_IDX[prev.currentNode];
+          if (prevIdx && prevIdx !== idx) {
+            this.setNpcWorking(prevIdx, false);
+            this.moveNpcToSpawn(prevIdx);
+          }
+
+          // Pipeline finished — camera back to player
+          if (!s.currentNode) {
+            this.selectedIndex = null;
+            useUiStore.getState().setSelectedNpc(null);
+          }
+        }
+      })
     );
 
     this.engine.renderer.setAnimationLoop(this.animate.bind(this));
