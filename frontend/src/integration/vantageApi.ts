@@ -43,6 +43,33 @@ export async function stopVantagePipeline(sessionId: string): Promise<void> {
   await fetch(`/api/stop/${sessionId}`, { method: 'POST' });
 }
 
+export async function readFile(
+  path: string
+): Promise<{ content: string; error?: string }> {
+  try {
+    const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`);
+    return res.json();
+  } catch {
+    return { content: '', error: 'Network error' };
+  }
+}
+
+export async function writeFile(
+  path: string,
+  content: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, content }),
+    });
+    return res.json();
+  } catch {
+    return { success: false, error: 'Network error' };
+  }
+}
+
 export async function fetchWorkspaceTree(
   workspacePath: string
 ): Promise<{ tree: any[]; error?: string }> {

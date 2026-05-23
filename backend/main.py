@@ -100,6 +100,11 @@ class PlanApprovalRequest(BaseModel):
     approved: bool = True
 
 
+class FileWriteRequest(BaseModel):
+    path: str
+    content: str
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────
 @app.post("/api/start")
 async def start_pipeline(req: StartRequest):
@@ -304,6 +309,31 @@ async def browse_folder():
         return {"path": path.replace("/", "\\") if path else ""}
     except Exception as e:
         return {"path": "", "error": str(e)}
+
+
+@app.get("/api/file")
+async def read_file_content(path: str):
+    """Read file content from disk."""
+    try:
+        file_path = Path(path)
+        if not file_path.exists() or not file_path.is_file():
+            return {"content": "", "error": f"File not found: {path}"}
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        return {"content": content}
+    except Exception as e:
+        return {"content": "", "error": str(e)}
+
+
+@app.post("/api/file")
+async def write_file_content(req: FileWriteRequest):
+    """Write file content to disk (editor save)."""
+    try:
+        file_path = Path(req.path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(req.content, encoding="utf-8")
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 # ── WebSocket — telemetry broadcast ───────────────────────────────────────
