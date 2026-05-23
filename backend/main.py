@@ -95,6 +95,11 @@ class HITLResponse(BaseModel):
     approved: bool
 
 
+class PlanApprovalRequest(BaseModel):
+    session_id: str
+    approved: bool = True
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────
 @app.post("/api/start")
 async def start_pipeline(req: StartRequest):
@@ -131,6 +136,7 @@ async def start_pipeline(req: StartRequest):
         "step_count": 0,
         "current_agent": "codeplan",
         "status": "running",
+        "plan_approved": None,
         "hitl_required": False,
         "hitl_type": None,
         "hitl_description": None,
@@ -170,6 +176,20 @@ async def _run_pipeline(graph, state: dict, session_id: str):
             "state": "error",
             "message": str(e),
         }))
+
+
+@app.post("/api/approve-plan")
+async def approve_plan(req: PlanApprovalRequest):
+    """Resume graph after user reviews and approves (or rejects) the execution plan."""
+    graph = get_graph()
+    config = {"configurable": {"thread_id": req.session_id}}
+
+    graph.update_state(config, {
+        "plan_approved": req.approved,
+        "status": "running" if req.approved else "error",
+    })
+    asyncio.create_task(_resume_pipeline(graph, config, req.session_id))
+    return {"session_id": req.session_id, "approved": req.approved}
 
 
 @app.post("/api/approve")

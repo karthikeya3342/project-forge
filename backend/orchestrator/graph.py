@@ -1,13 +1,14 @@
 """
 LangGraph orchestrator — central nervous system.
-Routes: codeplan -> [parsel|swe_agent] -> swe_agent -> autocoderover -> [done|hitl]
 
-Smart routing: Parsel is SKIPPED for simple tasks (≤3 plan steps).
-This saves 3-5 minutes of unnecessary decomposition.
+Flow:
+  codeplan → plan_approval* → [parsel|swe_agent] → autocoderover → [done|hitl]
 
-HITL note: graph is compiled with interrupt_before=["hitl"], meaning the graph
-PAUSES before hitl_node executes. The HITL broadcast must therefore happen in
-the agent node that sets hitl_required, not inside hitl_node.
+* plan_approval PAUSES graph (interrupt_before) so user can review and approve
+  the execution plan before any code is written.
+
+HITL note: graph compiled with interrupt_before=["plan_approval", "hitl"].
+Broadcasts for both gates happen in the PRECEDING agent node.
 """
 from typing import Literal
 
@@ -23,13 +24,12 @@ from backend.broadcast import broadcast as _broadcast
 
 
 MAX_STEPS = 50
-PARSEL_THRESHOLD = 4  # Skip Parsel if plan has ≤ this many steps
+PARSEL_THRESHOLD = 4  # Skip Parsel if plan has <= this many steps
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _hitl_broadcast(result: dict, agent: str) -> None:
-    """Broadcast HITL event from an agent node (before graph pauses)."""
     _broadcast({
         "type": "hitl_required",
         "agent": agent,
@@ -70,7 +70,34 @@ def codeplan_node(state: VantageState) -> dict:
     _broadcast({"agent": "codeplan", "state": "working", "message": "Scanning workspace..."})
     result = run_codeplan(state)
     _broadcast(result.get("last_telemetry", {}))
+
+    # Broadcast plan_ready HERE — graph will pause BEFORE plan_approval_node runs.
+    # This gives the frontend the plan data before the interrupt fires.
+    plan = result.get("execution_plan", [])
+    _broadcast({
+        "type": "plan_ready",
+        "agent": "codeplan",
+        "plan": plan,
+        "project_dir": result.get("project_dir", ""),
+        "step_count": len(plan),
+    })
+
     return result
+
+
+def plan_approval_node(state: VantageState) -> dict:
+    """
+    Pass-through — real pause managed by interrupt_before=["plan_approval"].
+    On resume the graph re-enters here; state already updated by /api/approve-plan.
+    """
+    if state.get("plan_approved") is False:
+        _broadcast({
+            "type": "pipeline_error",
+            "agent": "orchestrator",
+            "state": "error",
+            "message": "Pipeline aborted — plan rejected by user.",
+        })
+    return {}
 
 
 def parsel_node(state: VantageState) -> dict:
@@ -84,7 +111,6 @@ def swe_agent_node(state: VantageState) -> dict:
     _broadcast({"agent": "swe_agent", "state": "working", "message": "Writing code..."})
     result = run_swe_agent(state)
     if result.get("hitl_required"):
-        # Broadcast NOW — hitl_node won't run until after resume (interrupt_before)
         _hitl_broadcast(result, "swe_agent")
     else:
         _broadcast(result.get("last_telemetry", {}))
@@ -102,17 +128,17 @@ def autocoderover_node(state: VantageState) -> dict:
 
 
 def hitl_node(state: VantageState) -> dict:
-    """
-    Pass-through — the real pause is managed by interrupt_before=["hitl"].
-    On resume the graph re-enters here; state already updated by /api/approve.
-    """
+    """Pass-through for HITL pause. Real gate is interrupt_before."""
     return {}
 
 
 # ── Routing ────────────────────────────────────────────────────────────────
 
-def route_after_codeplan(state: VantageState) -> Literal["parsel", "swe_agent"]:
-    """Skip Parsel for simple tasks — go straight to SWE-Agent."""
+def route_after_plan_approval(state: VantageState) -> Literal["parsel", "swe_agent", "end"]:
+    """User approved plan. Decide whether to decompose (Parsel) or go straight to SWE."""
+    if state.get("plan_approved") is False:
+        return "end"
+
     plan = state.get("execution_plan", [])
     if len(plan) <= PARSEL_THRESHOLD:
         _broadcast({
@@ -159,13 +185,10 @@ def route_after_hitl_resume(state: VantageState) -> Literal["swe_agent", "end"]:
         return "end"
 
     hitl_type = state.get("hitl_type", "unknown")
-
     if hitl_type == "vulnerability_found":
-        # User accepted AST findings — pipeline is done, no need to re-run SWE-agent
         _completion_broadcast(state)
         return "end"
 
-    # dangerous_command — re-run swe_agent now that user approved
     return "swe_agent"
 
 
@@ -175,6 +198,7 @@ def build_graph(checkpointer=None) -> StateGraph:
     graph = StateGraph(VantageState)
 
     graph.add_node("codeplan", codeplan_node)
+    graph.add_node("plan_approval", plan_approval_node)
     graph.add_node("parsel", parsel_node)
     graph.add_node("swe_agent", swe_agent_node)
     graph.add_node("autocoderover", autocoderover_node)
@@ -182,11 +206,14 @@ def build_graph(checkpointer=None) -> StateGraph:
 
     graph.set_entry_point("codeplan")
 
-    # Smart routing: skip Parsel for simple tasks
+    # codeplan always flows to plan_approval (graph pauses here for user review)
+    graph.add_edge("codeplan", "plan_approval")
+
+    # After approval: smart routing
     graph.add_conditional_edges(
-        "codeplan",
-        route_after_codeplan,
-        {"parsel": "parsel", "swe_agent": "swe_agent"},
+        "plan_approval",
+        route_after_plan_approval,
+        {"parsel": "parsel", "swe_agent": "swe_agent", "end": END},
     )
     graph.add_edge("parsel", "swe_agent")
 
@@ -206,4 +233,7 @@ def build_graph(checkpointer=None) -> StateGraph:
         {"swe_agent": "swe_agent", "end": END},
     )
 
-    return graph.compile(checkpointer=checkpointer, interrupt_before=["hitl"])
+    return graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["plan_approval", "hitl"],
+    )

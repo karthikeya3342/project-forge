@@ -365,20 +365,396 @@ def run_swe_agent(state: VantageState) -> dict:
     git_available = _init_git(work_dir)
     if git_available:
         _broadcast_ws({"type": "agent_token", "agent": "swe_agent",
-                       "text": "🔒 Git initialized — all changes will be committed automatically."})
+                       "text": "Git initialized — all changes committed automatically."})
 
     tool_decls = _make_tool_declarations()
-    if tool_decls:
+    if not tool_decls:
+        return _run_oneshot(state, work_dir, runner, skip_hitl)
+
+    # Parallel workers when Parsel decomposed the tasks
+    decomposed = state.get("decomposed_tasks", [])
+    if len(decomposed) >= 2:
         try:
-            return _run_agentic_loop(state, work_dir, runner, tool_decls, skip_hitl, git_available)
+            return _run_parallel_workers(state, work_dir, runner, tool_decls, skip_hitl, git_available)
         except Exception as e:
             _broadcast_ws({
-                "type": "agent_token",
-                "agent": "swe_agent",
-                "text": f"\n⚠️ Agentic loop failed ({e}). Falling back to one-shot mode.\n",
+                "type": "agent_token", "agent": "swe_agent",
+                "text": f"Parallel mode failed ({e}). Running single worker.",
             })
 
+    # Single worker loop (simple tasks or fallback)
+    try:
+        return _run_agentic_loop(state, work_dir, runner, tool_decls, skip_hitl, git_available)
+    except Exception as e:
+        _broadcast_ws({
+            "type": "agent_token", "agent": "swe_agent",
+            "text": f"Agentic loop failed ({e}). Falling back to one-shot mode.",
+        })
+
     return _run_oneshot(state, work_dir, runner, skip_hitl)
+
+
+# ── Parallel workers ──────────────────────────────────────────────────────
+
+def _run_worker_loop(
+    worker_id: int,
+    task: dict,
+    state: VantageState,
+    work_dir: Path,
+    runner: "DockerRunner",
+    tool_decls: list,
+    skip_hitl: bool,
+    git_available: bool,
+    total_workers: int,
+    all_tasks: list[dict],
+) -> dict:
+    """
+    Focused single-task agentic loop for one parallel worker.
+    Returns {"code_changes": [...], "hitl_required": bool, ...}
+    """
+    agent_name = f"worker_{worker_id}"
+    step_index = task.get("step_index", worker_id)
+
+    _broadcast_ws({
+        "type": "worker_start",
+        "worker_id": worker_id,
+        "task": task.get("purpose", ""),
+        "step_index": step_index,
+    })
+    _broadcast_ws({
+        "type": "plan_step_update",
+        "step_index": step_index,
+        "status": "working",
+    })
+
+    ctx: dict = {
+        "code_changes": [],
+        "done": False,
+        "done_summary": "",
+        "hitl_required": False,
+        "hitl_type": None,
+        "hitl_description": None,
+    }
+
+    def _exec(name: str, args: dict) -> str:
+        _broadcast_ws({"type": "tool_call", "agent": agent_name, "tool": name, "args": args})
+
+        if name == "read_file":
+            path = args.get("path", "").lstrip("/\\")
+            try:
+                target = work_dir / path
+                text = target.read_text(encoding="utf-8", errors="replace")
+                return text[:MAX_FILE_READ] + "\n...[truncated]" if len(text) > MAX_FILE_READ else text
+            except FileNotFoundError:
+                return f"ERROR: '{path}' not found."
+            except Exception as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "write_file":
+            path = args.get("path", "").lstrip("/\\")
+            content = args.get("content", "")
+            try:
+                target = work_dir / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                old_content = target.read_text(encoding="utf-8", errors="replace") if target.exists() else ""
+                action = "modify" if old_content else "create"
+                target.write_text(content, encoding="utf-8")
+                diff = _compute_diff(old_content, content, path)
+                ctx["code_changes"].append({"path": path, "content": content, "action": action})
+                _broadcast_ws({"type": "file_write", "path": path, "content": content})
+                if diff:
+                    _broadcast_ws({"type": "file_diff", "path": path, "diff": diff})
+                return f"Written: {path} ({len(content):,} chars)"
+            except Exception as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "edit_file":
+            path = args.get("path", "").lstrip("/\\")
+            old_str = args.get("old_string", "")
+            new_str = args.get("new_string", "")
+            try:
+                target = work_dir / path
+                original = target.read_text(encoding="utf-8", errors="replace")
+                if old_str not in original:
+                    return f"ERROR: exact string not found in '{path}'."
+                updated = original.replace(old_str, new_str, 1)
+                diff = _compute_diff(original, updated, path)
+                target.write_text(updated, encoding="utf-8")
+                ctx["code_changes"].append({"path": path, "content": updated, "action": "modify"})
+                _broadcast_ws({"type": "file_write", "path": path, "content": updated})
+                if diff:
+                    _broadcast_ws({"type": "file_diff", "path": path, "diff": diff})
+                return f"Edited: {path}"
+            except FileNotFoundError:
+                return f"ERROR: '{path}' not found."
+            except Exception as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "run_bash":
+            cmd = args.get("command", "")
+            if not skip_hitl and _is_dangerous(cmd):
+                ctx["hitl_required"] = True
+                ctx["hitl_type"] = "dangerous_command"
+                ctx["hitl_description"] = f"Worker {worker_id} wants to run: {cmd}"
+                return f"PAUSED — approval required for: {cmd}"
+            result = runner.run_command(cmd)
+            out = (result.get("output") or "")[:MAX_CMD_OUTPUT]
+            return f"exit 0\n{out}" if result["success"] else f"non-zero exit\n{out}\n{(result.get('error') or '')[:200]}"
+
+        elif name == "list_dir":
+            path = args.get("path", ".").lstrip("/\\")
+            try:
+                target = work_dir / path if path != "." else work_dir
+                entries = sorted(os.scandir(str(target)), key=lambda e: (not e.is_dir(), e.name))
+                lines = [f"{'[D]' if e.is_dir() else '[F]'} {e.name}" for e in entries[:60]]
+                return "\n".join(lines) or "(empty)"
+            except Exception as exc:
+                return f"ERROR: {exc}"
+
+        elif name == "verify":
+            written = [c["path"] for c in ctx["code_changes"]]
+            if not written:
+                return "Nothing written yet."
+            result = _auto_verify(work_dir, written)
+            _broadcast_ws({
+                "type": "verification_result", "agent": agent_name,
+                "passed": result["passed"], "summary": result["summary"], "errors": result["errors"],
+            })
+            return f"{'PASSED' if result['passed'] else 'FAILED'}: {result['summary']}" + (
+                "\n" + "\n".join(result["errors"]) if not result["passed"] else ""
+            )
+
+        elif name == "task_done":
+            written = [c["path"] for c in ctx["code_changes"]]
+            if written:
+                verify_result = _auto_verify(work_dir, written)
+                _broadcast_ws({
+                    "type": "verification_result", "agent": agent_name,
+                    "passed": verify_result["passed"], "summary": verify_result["summary"],
+                    "errors": verify_result["errors"],
+                })
+                if not verify_result["passed"]:
+                    return (
+                        f"BLOCKED — fix errors before task_done.\n{verify_result['summary']}\n"
+                        + "\n".join(verify_result["errors"])
+                    )
+            ctx["done"] = True
+            ctx["done_summary"] = args.get("summary", "Task complete.")
+            return "Task marked done."
+
+        return f"Unknown tool: {name}"
+
+    # Worker system prompt — narrowly focused
+    other_tasks = [
+        f"  Worker {i}: {t.get('purpose', '')}"
+        for i, t in enumerate(all_tasks) if i != worker_id
+    ]
+    tree_text = _workspace_tree_text(str(work_dir))
+
+    system_prompt = f"""You are Worker {worker_id} of {total_workers} parallel agents.
+
+{_detect_shell_env(work_dir)}
+
+WORKSPACE:
+{tree_text}
+
+USER TASK CONTEXT: {state["user_prompt"]}
+
+YOUR SPECIFIC JOB: {task.get("purpose", "")}
+TARGET FILE: {task.get("signature", "(determine from your task)")}
+
+OTHER WORKERS ARE HANDLING:
+{chr(10).join(other_tasks) if other_tasks else "  (you are the only worker)"}
+
+RULES:
+• Focus ONLY on your assigned job. Do NOT touch other workers' files.
+• Write complete production-ready code — no stubs, no TODOs.
+• Call verify() after writing. Fix any errors. Then call task_done().
+• Max 10 steps. Be fast."""
+
+    history = [
+        _gt.Content(
+            role="user",
+            parts=[_gt.Part(text=f"Start Worker {worker_id}. Implement your task now.")],
+        )
+    ]
+
+    READ_ONLY_TOOLS = {"read_file", "list_dir"}
+    MAX_WORKER_STEPS = 10
+
+    for step in range(MAX_WORKER_STEPS):
+        if ctx["done"] or ctx["hitl_required"]:
+            break
+
+        text, func_calls, model_content = call_llm_with_tools_turn(
+            MODEL, system_prompt, history, tool_decls, state["google_api_key"]
+        )
+
+        if text.strip():
+            lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+            useful = [l for l in lines if len(l) < 120 and not l.startswith(
+                ("I ", "Let me ", "Now I ", "I'll ", "I need ", "I should ", "Okay", "Hmm", "Actually")
+            )]
+            if useful:
+                _broadcast_ws({"type": "agent_token", "agent": agent_name, "text": "\n".join(useful)})
+
+        history.append(model_content)
+
+        if not func_calls:
+            ctx["done"] = True
+            ctx["done_summary"] = text[:300]
+            break
+
+        read_calls = [fc for fc in func_calls if fc["name"] in READ_ONLY_TOOLS]
+        write_calls = [fc for fc in func_calls if fc["name"] not in READ_ONLY_TOOLS]
+
+        tool_responses: list[tuple[str, str]] = []
+        if len(read_calls) > 1:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                futs = {pool.submit(_exec, fc["name"], fc["args"]): fc for fc in read_calls}
+                for fut in concurrent.futures.as_completed(futs):
+                    fc = futs[fut]
+                    tool_responses.append((fc["name"], fut.result()))
+        elif read_calls:
+            fc = read_calls[0]
+            tool_responses.append((fc["name"], _exec(fc["name"], fc["args"])))
+
+        for fc in write_calls:
+            if ctx["hitl_required"] or ctx["done"]:
+                break
+            tool_responses.append((fc["name"], _exec(fc["name"], fc["args"])))
+
+        if tool_responses:
+            history.append(make_tool_response_content(tool_responses))
+
+    # Mark step done in plan view
+    files_written = [c["path"] for c in ctx["code_changes"]]
+    _broadcast_ws({
+        "type": "worker_complete",
+        "worker_id": worker_id,
+        "step_index": step_index,
+        "files": files_written,
+    })
+    _broadcast_ws({
+        "type": "plan_step_update",
+        "step_index": step_index,
+        "status": "done" if ctx["done"] else "error",
+        "files": files_written,
+    })
+
+    return {
+        "code_changes": ctx["code_changes"],
+        "hitl_required": ctx["hitl_required"],
+        "hitl_type": ctx.get("hitl_type"),
+        "hitl_description": ctx.get("hitl_description"),
+        "done_summary": ctx["done_summary"],
+    }
+
+
+def _run_parallel_workers(
+    state: VantageState,
+    work_dir: Path,
+    runner: "DockerRunner",
+    tool_decls: list,
+    skip_hitl: bool,
+    git_available: bool,
+) -> dict:
+    """Spawn parallel worker loops — each handles one decomposed task."""
+    import concurrent.futures
+
+    tasks = state.get("decomposed_tasks", [])
+    # Cap at 2 workers to respect API rate limits
+    max_workers = min(2, len(tasks))
+    worker_tasks = tasks[:max_workers]
+    total_workers = len(worker_tasks)
+
+    _broadcast_ws({
+        "type": "agent_token",
+        "agent": "swe_agent",
+        "text": f"Spawning {total_workers} parallel workers...",
+    })
+
+    all_code_changes: list[dict] = []
+    hitl_result: dict | None = None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_map = {
+            pool.submit(
+                _run_worker_loop,
+                worker_id, task, state, work_dir, runner, tool_decls,
+                skip_hitl, git_available, total_workers, worker_tasks,
+            ): (worker_id, task)
+            for worker_id, task in enumerate(worker_tasks)
+        }
+
+        for fut in concurrent.futures.as_completed(future_map):
+            worker_id, task = future_map[fut]
+            try:
+                result = fut.result()
+                if result.get("hitl_required") and not hitl_result:
+                    hitl_result = result
+                else:
+                    all_code_changes.extend(result.get("code_changes", []))
+            except Exception as exc:
+                _broadcast_ws({
+                    "type": "agent_token", "agent": "swe_agent",
+                    "text": f"Worker {worker_id} crashed: {exc}",
+                })
+
+    # Handle remaining tasks (if tasks > max_workers) sequentially
+    remaining = tasks[max_workers:]
+    if remaining and not hitl_result:
+        for i, task in enumerate(remaining):
+            worker_id = max_workers + i
+            result = _run_worker_loop(
+                worker_id, task, state, work_dir, runner, tool_decls,
+                skip_hitl, git_available, total_workers + len(remaining), tasks,
+            )
+            if result.get("hitl_required") and not hitl_result:
+                hitl_result = result
+                break
+            all_code_changes.extend(result.get("code_changes", []))
+
+    if hitl_result:
+        return {
+            "hitl_required": True,
+            "hitl_type": hitl_result.get("hitl_type"),
+            "hitl_description": hitl_result.get("hitl_description"),
+            "status": "hitl_pause",
+            "current_agent": "swe_agent",
+            "step_count": 1,
+            "last_telemetry": {
+                "agent": "swe_agent",
+                "state": "waiting_approval",
+                "message": hitl_result.get("hitl_description", "Approval required."),
+            },
+        }
+
+    # Single final git commit for all workers
+    if git_available and all_code_changes:
+        _broadcast_ws({"type": "file_tree", "tree": _build_tree(str(work_dir), str(work_dir))})
+        commit_hash = _git_commit(work_dir, f"parallel: {len(all_code_changes)} files written")
+        _broadcast_ws({
+            "type": "git_commit", "agent": "swe_agent",
+            "hash": commit_hash, "message": f"{len(all_code_changes)} files committed",
+        })
+
+    summary = f"Parallel workers complete: {len(all_code_changes)} file(s) written by {total_workers} worker(s)."
+    return {
+        "code_changes": all_code_changes,
+        "last_command_output": "",
+        "last_error": None,
+        "hitl_required": False,
+        "hitl_approved": None,
+        "current_agent": "autocoderover",
+        "step_count": 1,
+        "last_telemetry": {
+            "agent": "swe_agent",
+            "state": "complete",
+            "message": summary,
+        },
+    }
 
 
 # ── Agentic loop ───────────────────────────────────────────────────────────

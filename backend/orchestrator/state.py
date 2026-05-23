@@ -27,6 +27,9 @@ class VantageState(TypedDict):
     # Project directory (subfolder created by CodePlan for this task)
     project_dir: Optional[str]
 
+    # Plan approval gate
+    plan_approved: Optional[bool]   # None = not yet shown, True = approved, False = rejected
+
     # Orchestrator control
     step_count: Annotated[int, operator.add]
     current_agent: str

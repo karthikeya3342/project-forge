@@ -218,7 +218,8 @@ export function connectVantageWs() {
         vantage.appendWsLog({ ts: Date.now(), raw, packet });
       }
       const agentName = (packet.agent as string) ?? '';
-      const agentIdx = AGENT_INDEX[agentName];
+      // worker_0, worker_1 etc all animate the swe_agent NPC (index 4)
+      const agentIdx = agentName.startsWith('worker_') ? 4 : AGENT_INDEX[agentName];
       const label = AGENT_LABEL[agentName] ?? agentName;
       const state = packet.state as string | undefined;
       const message = packet.message as string | undefined;
@@ -258,6 +259,50 @@ export function connectVantageWs() {
         setTimeout(() => {
           useVantageStore.getState().setModifyingFile(path, false);
         }, 2000);
+      }
+
+      // Plan approval gate — CodePlan broadcast the plan, graph is now paused
+      if (type === 'plan_ready') {
+        const plan = packet.plan as string[];
+        vantage.setExecutionPlan(plan);
+        vantage.setPlanApprovalPending(true);
+        return;
+      }
+
+      // Individual plan step progress (from parallel workers)
+      if (type === 'plan_step_update') {
+        const idx = packet.step_index as number;
+        const status = packet.status as 'pending' | 'working' | 'done' | 'error';
+        vantage.setPlanStepStatus(idx, status);
+        return;
+      }
+
+      // Parallel worker lifecycle
+      if (type === 'worker_start') {
+        const wid = packet.worker_id as number;
+        const workerTask = packet.task as string;
+        vantage.setActiveWorkerCount(useVantageStore.getState().activeWorkerCount + 1);
+        vantage.setAgentBubbleText('swe_agent',
+          `${useVantageStore.getState().activeWorkerCount} worker(s) active`);
+        core.appendAgentHistory(1, 'assistant', [
+          `**[Worker ${wid}]** Starting: ${workerTask}`,
+        ]);
+        if (agentIdx !== undefined) ui.setAgentStatus(4, 'working'); // swe_agent NPC
+        return;
+      }
+
+      if (type === 'worker_complete') {
+        const wid = packet.worker_id as number;
+        const files = (packet.files as string[]) ?? [];
+        const newCount = Math.max(0, useVantageStore.getState().activeWorkerCount - 1);
+        vantage.setActiveWorkerCount(newCount);
+        if (newCount === 0) vantage.clearAgentBubbleText('swe_agent');
+        if (files.length) {
+          core.appendAgentHistory(1, 'assistant', [
+            `**[Worker ${wid}]** Done — ${files.map(f => `\`${f}\``).join(', ')}`,
+          ]);
+        }
+        return;
       }
 
       // TRUST PILLAR 3: File diff — show exactly what changed
@@ -445,6 +490,12 @@ export function connectVantageWs() {
         Object.keys(activeTaskIds).forEach((name) => delete activeTaskIds[name]);
         Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
         core.setPhase('done');
+        // Mark all plan steps done and clear pending state
+        useVantageStore.getState().executionPlan.forEach((_, i) =>
+          useVantageStore.getState().setPlanStepStatus(i, 'done')
+        );
+        useVantageStore.getState().setPlanApprovalPending(false);
+        useVantageStore.getState().setActiveWorkerCount(0);
 
         const summary = packet.summary as any;
         let text = '✅ **Pipeline complete!**\n\n';
@@ -464,6 +515,8 @@ export function connectVantageWs() {
       // ── Pipeline error ───────────────────────────────────────────────────
       if (type === 'pipeline_error') {
         useVantageStore.getState().clearStreamingText();
+        useVantageStore.getState().setPlanApprovalPending(false);
+        useVantageStore.getState().setActiveWorkerCount(0);
         Object.values(AGENT_INDEX).forEach((idx) => ui.setAgentStatus(idx, 'idle'));
         core.setPhase('idle');
         core.appendAgentHistory(1, 'assistant', [

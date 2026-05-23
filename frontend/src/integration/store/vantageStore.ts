@@ -20,6 +20,7 @@ export interface TerminalLogEntry {
 
 type MainView = '3d' | 'code';
 type ConsoleTab = 'events' | 'terminal';
+export type PlanStepStatus = 'pending' | 'working' | 'done' | 'error';
 
 interface VantageStoreState {
   // File explorer
@@ -50,6 +51,12 @@ interface VantageStoreState {
   // Focused agent index (clicked NPC in VANTAGE mode)
   focusedAgentIndex: number | null;
 
+  // Plan approval gate
+  executionPlan: string[];
+  planApprovalPending: boolean;
+  planStepStatuses: Record<number, PlanStepStatus>;
+  activeWorkerCount: number;
+
   // Actions
   setFileTree: (tree: FileNode[]) => void;
   setSelectedFilePath: (path: string | null) => void;
@@ -66,6 +73,10 @@ interface VantageStoreState {
   setAgentBubbleText: (agent: string, text: string) => void;
   clearAgentBubbleText: (agent: string) => void;
   setFocusedAgentIndex: (index: number | null) => void;
+  setExecutionPlan: (plan: string[]) => void;
+  setPlanApprovalPending: (v: boolean) => void;
+  setPlanStepStatus: (idx: number, status: PlanStepStatus) => void;
+  setActiveWorkerCount: (n: number) => void;
   reset: () => void;
 }
 
@@ -86,6 +97,10 @@ const INITIAL: Omit<
   | 'setAgentBubbleText'
   | 'clearAgentBubbleText'
   | 'setFocusedAgentIndex'
+  | 'setExecutionPlan'
+  | 'setPlanApprovalPending'
+  | 'setPlanStepStatus'
+  | 'setActiveWorkerCount'
   | 'reset'
 > = {
   fileTree: [],
@@ -103,6 +118,10 @@ const INITIAL: Omit<
   streamingText: '',
   agentBubbleText: {},
   focusedAgentIndex: null,
+  executionPlan: [],
+  planApprovalPending: false,
+  planStepStatuses: {},
+  activeWorkerCount: 0,
 };
 
 export const useVantageStore = create<VantageStoreState>()((set) => ({
@@ -161,9 +180,22 @@ export const useVantageStore = create<VantageStoreState>()((set) => ({
 
   setFocusedAgentIndex: (index) => set({ focusedAgentIndex: index }),
 
+  setExecutionPlan: (plan) => set({ executionPlan: plan, planStepStatuses: {} }),
+
+  setPlanApprovalPending: (v) => set({ planApprovalPending: v }),
+
+  setPlanStepStatus: (idx, status) =>
+    set((s) => ({ planStepStatuses: { ...s.planStepStatuses, [idx]: status } })),
+
+  setActiveWorkerCount: (n) => set({ activeWorkerCount: n }),
+
   reset: () =>
     set({
       ...INITIAL,
       modifyingFiles: new Set<string>(),
+      planStepStatuses: {},
+      executionPlan: [],
+      planApprovalPending: false,
+      activeWorkerCount: 0,
     }),
 }));

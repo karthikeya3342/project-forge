@@ -17,15 +17,9 @@ import { startVantagePipeline, stopVantagePipeline } from '../../integration/van
 import { connectVantageWs } from '../../integration/vantageWs';
 import { resolveHITL } from '../../integration/vantageApi';
 import { addAlwaysAllowed, isAlwaysAllowed } from '../../integration/vantageAlwaysAllow';
+import { VantagePlanView } from './VantagePlanView';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-
-const PIPELINE_NODES = [
-  { id: 'codeplan',      label: 'CodePlan'      },
-  { id: 'parsel',        label: 'Parsel'        },
-  { id: 'swe_agent',     label: 'SWE-Agent'     },
-  { id: 'autocoderover', label: 'AutoCodeRover' },
-];
 
 const AGENT_COLORS: Record<string, string> = {
   codeplan:      'bg-cyan-500',
@@ -34,20 +28,6 @@ const AGENT_COLORS: Record<string, string> = {
   autocoderover: 'bg-pink-500',
   orchestrator:  'bg-yellow-500',
 };
-
-type NodeStatus = 'idle' | 'working' | 'complete' | 'error' | 'waiting';
-
-function NodeDot({ status }: { status: NodeStatus }) {
-  if (status === 'working')
-    return <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse inline-block" />;
-  if (status === 'complete')
-    return <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />;
-  if (status === 'error')
-    return <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />;
-  if (status === 'waiting')
-    return <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />;
-  return <span className="w-1.5 h-1.5 rounded-full bg-zinc-300 inline-block" />;
-}
 
 // ── Message renderer ──────────────────────────────────────────────────────
 
@@ -206,16 +186,8 @@ function HitlCard({
 
 // ── Main panel ────────────────────────────────────────────────────────────
 
-// Agent name → label for filter matching
-const AGENT_FILTER_LABELS: Record<number, string[]> = {
-  2: ['CodePlan', 'codeplan'],
-  3: ['Parsel', 'parsel'],
-  4: ['SWE-Agent', 'swe_agent', 'SWE_Agent'],
-  5: ['AutoCodeRover', 'autocoderover'],
-};
-
 export const VantageTelemetryPanel: React.FC = () => {
-  const { currentNode, wsLog, streamingText, streamingAgent, focusedAgentIndex, setFocusedAgentIndex } = useVantageStore();
+  const { currentNode, streamingText, streamingAgent } = useVantageStore();
   const {
     vantageHitl,
     setVantageHitl,
@@ -246,19 +218,6 @@ export const VantageTelemetryPanel: React.FC = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingText, vantageHitl]);
-
-  function nodeStatus(id: string): NodeStatus {
-    if (currentNode === id) return 'working';
-    for (let i = wsLog.length - 1; i >= 0; i--) {
-      const p = wsLog[i].packet;
-      if (p.agent === id) {
-        if (p.state === 'complete') return 'complete';
-        if (p.state === 'error') return 'error';
-        if (p.state === 'waiting_approval') return 'waiting';
-      }
-    }
-    return 'idle';
-  }
 
   const handleSend = async () => {
     if (!input.trim() || sending) return;
@@ -324,20 +283,7 @@ export const VantageTelemetryPanel: React.FC = () => {
     setVantageHitl(null);
   };
 
-  const visibleMessages = messages.filter((m: any) => {
-    if (m.metadata?.internal) return false;
-    // Apply agent filter if active
-    if (focusedAgentIndex !== null && m.role === 'assistant') {
-      const labels = AGENT_FILTER_LABELS[focusedAgentIndex];
-      if (labels) {
-        // Keep messages from the filtered agent + system messages (pipeline started, etc.)
-        const hasLabel = labels.some(l => m.content?.includes(`[${l}]`));
-        const isSystem = m.content?.startsWith('✅') || m.content?.startsWith('❌') || m.content?.startsWith('Pipeline') || m.content?.startsWith('Initializing') || m.content?.startsWith('⚡');
-        if (!hasLabel && !isSystem) return false;
-      }
-    }
-    return true;
-  });
+  const visibleMessages = messages.filter((m: any) => !m.metadata?.internal);
 
   return (
     <div className="w-80 h-full bg-white border-l border-zinc-100 flex flex-col overflow-hidden shrink-0">
@@ -358,60 +304,8 @@ export const VantageTelemetryPanel: React.FC = () => {
         )}
       </div>
 
-      {/* ── Pipeline strip (clickable for filtering) ────────────────────── */}
-      <div className="px-3 py-1.5 border-b border-zinc-100 shrink-0 flex items-center gap-3">
-        {PIPELINE_NODES.map((node, i) => {
-          const status = nodeStatus(node.id);
-          const nodeIdx = { codeplan: 2, parsel: 3, swe_agent: 4, autocoderover: 5 }[node.id] ?? 0;
-          const isFiltered = focusedAgentIndex === nodeIdx;
-          return (
-            <React.Fragment key={node.id}>
-              <button
-                onClick={() => setFocusedAgentIndex(isFiltered ? null : nodeIdx)}
-                className={`flex items-center gap-1 transition-all rounded-md px-1 -mx-1 ${
-                  isFiltered ? 'bg-zinc-100 ring-1 ring-zinc-300' : 'hover:bg-zinc-50'
-                }`}
-                title={isFiltered ? 'Show all messages' : `Filter to ${node.label}`}
-              >
-                <NodeDot status={status} />
-                <span
-                  className={`text-[9px] font-bold ${
-                    status === 'working'
-                      ? 'text-cyan-500'
-                      : status === 'complete'
-                      ? 'text-emerald-500'
-                      : status === 'error'
-                      ? 'text-red-500'
-                      : status === 'waiting'
-                      ? 'text-amber-500'
-                      : 'text-zinc-300'
-                  }`}
-                >
-                  {node.label}
-                </span>
-              </button>
-              {i < PIPELINE_NODES.length - 1 && (
-                <span className="text-zinc-200 text-[9px]">›</span>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
-
-      {/* ── Filter badge ───────────────────────────────────────────────── */}
-      {focusedAgentIndex !== null && (
-        <div className="px-3 py-1 border-b border-zinc-100 shrink-0 flex items-center justify-between">
-          <span className="text-[9px] text-zinc-500">
-            Showing: <span className="font-bold text-zinc-700">{AGENT_FILTER_LABELS[focusedAgentIndex]?.[0] ?? 'Agent'}</span>
-          </span>
-          <button
-            onClick={() => setFocusedAgentIndex(null)}
-            className="text-[9px] text-cyan-500 hover:text-cyan-700 font-bold uppercase tracking-widest"
-          >
-            Show All
-          </button>
-        </div>
-      )}
+      {/* ── Notion-style plan view ──────────────────────────────────────── */}
+      <VantagePlanView />
 
       {/* ── Chat ─────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3 min-h-0 [scrollbar-width:thin] [scrollbar-color:theme(colors.zinc.200)_transparent]">
@@ -421,10 +315,7 @@ export const VantageTelemetryPanel: React.FC = () => {
               <Terminal size={14} className="text-zinc-400" />
             </div>
             <p className="text-[10px] text-zinc-400 leading-relaxed">
-              {focusedAgentIndex !== null
-                ? 'No messages from this agent yet.'
-                : <>Describe what to build.<br />VANTAGE will plan and execute it.</>
-              }
+              Describe what to build.<br />VANTAGE will plan and execute it.
             </p>
           </div>
         ) : (

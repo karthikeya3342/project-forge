@@ -17,6 +17,17 @@ export async function startVantagePipeline(
   return res.json();
 }
 
+export async function approvePlan(
+  sessionId: string,
+  approved: boolean = true
+): Promise<void> {
+  await fetch('/api/approve-plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, approved }),
+  });
+}
+
 export async function resolveHITL(
   sessionId: string,
   approved: boolean
