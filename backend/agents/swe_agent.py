@@ -17,6 +17,8 @@ import json
 import re
 import os
 import subprocess
+import threading
+import time
 from pathlib import Path
 from google.genai import types as _gt
 
@@ -26,6 +28,31 @@ from backend.broadcast import broadcast as _broadcast_ws
 from backend.agents.utils import call_llm, call_llm_with_tools_turn, make_tool_response_content
 
 MODEL = "gemma-4-26b-a4b-it"
+
+
+# ── API rate limiter — shared across ALL parallel workers ──────────────────
+# Gemma API: 15 req/min → use 13 for safety margin
+
+class _RateLimiter:
+    """Sliding-window token bucket. Thread-safe."""
+    def __init__(self, max_per_minute: int):
+        self._lock = threading.Lock()
+        self._calls: list[float] = []
+        self._max = max_per_minute
+
+    def acquire(self) -> None:
+        """Block until a request slot is available."""
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                self._calls = [t for t in self._calls if now - t < 60.0]
+                if len(self._calls) < self._max:
+                    self._calls.append(now)
+                    return
+            time.sleep(0.5)
+
+
+_rate_limiter = _RateLimiter(max_per_minute=13)
 
 
 def _detect_shell_env(work_dir: Path) -> str:
@@ -586,6 +613,7 @@ RULES:
         if ctx["done"] or ctx["hitl_required"]:
             break
 
+        _rate_limiter.acquire()  # respect 15 req/min API limit
         text, func_calls, model_content = call_llm_with_tools_turn(
             MODEL, system_prompt, history, tool_decls, state["google_api_key"]
         )
@@ -664,8 +692,8 @@ def _run_parallel_workers(
     import concurrent.futures
 
     tasks = state.get("decomposed_tasks", [])
-    # Cap at 2 workers to respect API rate limits
-    max_workers = min(2, len(tasks))
+    # Rate limiter (module-level _rate_limiter) handles API quota automatically
+    max_workers = min(5, len(tasks))
     worker_tasks = tasks[:max_workers]
     total_workers = len(worker_tasks)
 
@@ -1052,6 +1080,7 @@ RULES:
         if step > 0 and step % COMPACT_EVERY == 0:
             _compact_history()
 
+        _rate_limiter.acquire()  # respect 15 req/min API limit
         text, func_calls, model_content = call_llm_with_tools_turn(
             MODEL, system_prompt, history, tool_decls, state["google_api_key"]
         )

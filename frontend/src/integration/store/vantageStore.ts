@@ -1,5 +1,33 @@
 import { create } from 'zustand';
 
+// ── Tree helpers ────────────────────────────────────────────────────────────
+
+function _insertFile(tree: FileNode[], parts: string[], fullPath: string): FileNode[] {
+  if (parts.length === 0) return tree;
+  const [head, ...rest] = parts;
+
+  if (rest.length === 0) {
+    // Leaf — file node
+    if (tree.some((n) => n.name === head && n.type === 'file')) return tree;
+    return [...tree, { name: head, path: fullPath, type: 'file' as const }];
+  }
+
+  // Directory node
+  const existing = tree.find((n) => n.name === head && n.type === 'directory');
+  const dirPath = fullPath.split('/').slice(0, fullPath.split('/').length - rest.length).join('/');
+  if (existing) {
+    return tree.map((n) =>
+      n === existing
+        ? { ...n, children: _insertFile(n.children ?? [], rest, fullPath) }
+        : n
+    );
+  }
+  return [
+    ...tree,
+    { name: head, path: dirPath, type: 'directory' as const, children: _insertFile([], rest, fullPath) },
+  ];
+}
+
 export interface FileNode {
   name: string;
   path: string;
@@ -73,6 +101,7 @@ interface VantageStoreState {
   setAgentBubbleText: (agent: string, text: string) => void;
   clearAgentBubbleText: (agent: string) => void;
   setFocusedAgentIndex: (index: number | null) => void;
+  upsertFileInTree: (path: string) => void;
   setExecutionPlan: (plan: string[]) => void;
   setPlanApprovalPending: (v: boolean) => void;
   setPlanStepStatus: (idx: number, status: PlanStepStatus) => void;
@@ -97,6 +126,7 @@ const INITIAL: Omit<
   | 'setAgentBubbleText'
   | 'clearAgentBubbleText'
   | 'setFocusedAgentIndex'
+  | 'upsertFileInTree'
   | 'setExecutionPlan'
   | 'setPlanApprovalPending'
   | 'setPlanStepStatus'
@@ -179,6 +209,9 @@ export const useVantageStore = create<VantageStoreState>()((set) => ({
     }),
 
   setFocusedAgentIndex: (index) => set({ focusedAgentIndex: index }),
+
+  upsertFileInTree: (path) =>
+    set((s) => ({ fileTree: _insertFile(s.fileTree, path.replace(/\\/g, '/').split('/'), path.replace(/\\/g, '/')) })),
 
   setExecutionPlan: (plan) => set({ executionPlan: plan, planStepStatuses: {} }),
 

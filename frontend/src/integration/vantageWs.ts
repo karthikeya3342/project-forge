@@ -249,13 +249,13 @@ export function connectVantageWs() {
         return;
       }
 
-      // File write event: update content cache + mark as modifying
+      // File write event: update content cache + live tree + mark as modifying
       if (type === 'file_write') {
         const path = packet.path as string;
         const content = packet.content as string;
         vantage.setFileContent(path, content);
+        vantage.upsertFileInTree(path);   // live tree update during pipeline
         vantage.setModifyingFile(path, true);
-        // Clear modifying indicator after 2s
         setTimeout(() => {
           useVantageStore.getState().setModifyingFile(path, false);
         }, 2000);
