@@ -110,15 +110,17 @@ async def start_pipeline(req: StartRequest):
     session_id = str(uuid.uuid4())
 
     db = SessionLocal()
-    session = AgentSession(
-        session_id=session_id,
-        user_prompt=req.prompt,
-        workspace_path=req.workspace_path,
-        status="running",
-    )
-    db.add(session)
-    db.commit()
-    db.close()
+    try:
+        session = AgentSession(
+            session_id=session_id,
+            user_prompt=req.prompt,
+            workspace_path=req.workspace_path,
+            status="running",
+        )
+        db.add(session)
+        db.commit()
+    finally:
+        db.close()
 
     initial_state = {
         "session_id": session_id,
@@ -160,15 +162,18 @@ async def _run_pipeline(graph, state: dict, session_id: str):
         config = {"configurable": {"thread_id": session_id}}
         async for event in graph.astream(state, config=config):
             db = SessionLocal()
-            session = db.query(AgentSession).filter_by(session_id=session_id).first()
-            if session:
-                current_state = graph.get_state(config)
-                session.set_state(dict(current_state.values) if current_state.values else {})
-                session.current_agent = current_state.values.get("current_agent", "unknown") if current_state.values else "unknown"
-                session.step_count = current_state.values.get("step_count", 0) if current_state.values else 0
-                session.status = current_state.values.get("status", "running") if current_state.values else "running"
-                db.commit()
-            db.close()
+            try:
+                session = db.query(AgentSession).filter_by(session_id=session_id).first()
+                if session:
+                    current_state = graph.get_state(config)
+                    vals = current_state.values if current_state else {}
+                    session.set_state(dict(vals) if vals else {})
+                    session.current_agent = vals.get("current_agent", "unknown") if vals else "unknown"
+                    session.step_count = vals.get("step_count", 0) if vals else 0
+                    session.status = vals.get("status", "running") if vals else "running"
+                    db.commit()
+            finally:
+                db.close()
     except Exception as e:
         await broadcast_telemetry(json.dumps({
             "type": "pipeline_error",
@@ -223,13 +228,14 @@ async def stop_pipeline(session_id: str):
     if task and not task.done():
         task.cancel()
 
-    # Mark session stopped in DB
     db = SessionLocal()
-    session = db.query(AgentSession).filter_by(session_id=session_id).first()
-    if session:
-        session.status = "stopped"
-        db.commit()
-    db.close()
+    try:
+        session = db.query(AgentSession).filter_by(session_id=session_id).first()
+        if session:
+            session.status = "stopped"
+            db.commit()
+    finally:
+        db.close()
 
     await broadcast_telemetry(json.dumps({
         "type": "pipeline_error",
@@ -243,8 +249,10 @@ async def stop_pipeline(session_id: str):
 @app.get("/api/status/{session_id}")
 async def get_status(session_id: str):
     db = SessionLocal()
-    session = db.query(AgentSession).filter_by(session_id=session_id).first()
-    db.close()
+    try:
+        session = db.query(AgentSession).filter_by(session_id=session_id).first()
+    finally:
+        db.close()
     if not session:
         return {"error": "Session not found"}
     return {

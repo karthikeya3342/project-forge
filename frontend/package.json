@@ -1,11 +1,11 @@
 {
-  "name": "the-delegation",
-  "description": "A no-code 3D playground to explore, design, and interact with Agentic AI systems",
+  "name": "forge",
+  "description": "Multi-agent AI software engineering platform with 3D visualization and trust pillars",
   "license": "MIT",
-  "author": "Arturo Paracuellos <arturo@unboring.net>",
+  "author": "Karthikeya <karthikeya@askd.in>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arturitu/the-delegation.git"
+    "url": "https://github.com/karthikeya3342/project-vantage.git"
   },
   "private": true,
   "version": "0.2.0",

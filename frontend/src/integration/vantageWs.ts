@@ -221,9 +221,9 @@ export function connectVantageWs() {
         vantage.appendWsLog({ ts: Date.now(), raw, packet });
       }
       const agentName = (packet.agent as string) ?? '';
-      // worker_N maps to dedicated NPC slot (reuses idle NPCs from other agents)
+      const _wid = parseInt(agentName.replace('worker_', ''), 10);
       const agentIdx = agentName.startsWith('worker_')
-        ? WORKER_NPC_MAP[parseInt(agentName.replace('worker_', ''), 10)] ?? 4
+        ? (WORKER_NPC_MAP[isNaN(_wid) ? 0 : _wid] ?? 4)
         : AGENT_INDEX[agentName];
       const label = AGENT_LABEL[agentName] ?? agentName;
       const state = packet.state as string | undefined;

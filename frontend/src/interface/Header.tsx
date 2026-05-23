@@ -1,7 +1,6 @@
 import { Info, KeyRound, Maximize2 } from 'lucide-react';
 import React, { useState } from 'react';
 import packageJson from '../../package.json';
-import { useCoreStore } from '../integration/store/coreStore';
 import { useUiStore } from '../integration/store/uiStore';
 import BYOKModal from './BYOKModal';
 import InfoModal from './InfoModal';
@@ -10,7 +9,6 @@ const version = packageJson.version;
 
 const Header: React.FC = () => {
   const { llmConfig, isBYOKOpen, setBYOKOpen } = useUiStore();
-  const { setViewMode } = useCoreStore();
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const hasKey = !!llmConfig.apiKey;
 
