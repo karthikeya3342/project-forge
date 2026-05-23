@@ -206,7 +206,7 @@ export const VantageConsole: React.FC = () => {
   }, [wsLog]);
 
   return (
-    <div className="h-44 flex flex-col border-t border-zinc-200 bg-white shrink-0">
+    <div className="h-full flex flex-col border-t border-zinc-200 bg-white">
       {/* Tabs */}
       <div className="h-8 flex items-center border-b border-zinc-200 shrink-0 px-1 gap-0.5">
         <button

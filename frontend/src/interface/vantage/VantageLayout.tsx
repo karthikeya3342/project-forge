@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Cpu, Box } from 'lucide-react';
 import Header from '../Header';
 import UIOverlay from '../UIOverlay';
@@ -14,6 +14,25 @@ interface VantageLayoutProps {
 
 export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
   const { mainView, setMainView } = useVantageStore();
+  const [consoleHeight, setConsoleHeight] = useState(176);
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { startY: e.clientY, startH: consoleHeight };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const delta = dragRef.current.startY - ev.clientY;
+      setConsoleHeight(Math.max(80, Math.min(600, dragRef.current.startH + delta)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [consoleHeight]);
 
   return (
     <div className="w-screen h-screen bg-white flex flex-col overflow-hidden">
@@ -72,8 +91,17 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
             )}
           </div>
 
+          {/* Drag handle */}
+          <div
+            onMouseDown={onDragStart}
+            className="h-1.5 shrink-0 cursor-row-resize bg-zinc-100 hover:bg-cyan-400 active:bg-cyan-500 transition-colors"
+            title="Drag to resize console"
+          />
+
           {/* Console */}
-          <VantageConsole />
+          <div style={{ height: consoleHeight }} className="shrink-0 overflow-hidden flex flex-col">
+            <VantageConsole />
+          </div>
         </div>
 
         {/* Right: Telemetry */}
