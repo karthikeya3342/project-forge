@@ -84,6 +84,7 @@ interface VantageStoreState {
   planApprovalPending: boolean;
   planStepStatuses: Record<number, PlanStepStatus>;
   activeWorkerCount: number;
+  terminalOutput: string;
 
   // Actions
   setFileTree: (tree: FileNode[]) => void;
@@ -106,6 +107,8 @@ interface VantageStoreState {
   setPlanApprovalPending: (v: boolean) => void;
   setPlanStepStatus: (idx: number, status: PlanStepStatus) => void;
   setActiveWorkerCount: (n: number) => void;
+  appendTerminalOutput: (chunk: string) => void;
+  clearTerminalOutput: () => void;
   reset: () => void;
 }
 
@@ -131,6 +134,8 @@ const INITIAL: Omit<
   | 'setPlanApprovalPending'
   | 'setPlanStepStatus'
   | 'setActiveWorkerCount'
+  | 'appendTerminalOutput'
+  | 'clearTerminalOutput'
   | 'reset'
 > = {
   fileTree: [],
@@ -152,6 +157,7 @@ const INITIAL: Omit<
   planApprovalPending: false,
   planStepStatuses: {},
   activeWorkerCount: 0,
+  terminalOutput: '',
 };
 
 export const useVantageStore = create<VantageStoreState>()((set) => ({
@@ -222,6 +228,11 @@ export const useVantageStore = create<VantageStoreState>()((set) => ({
 
   setActiveWorkerCount: (n) => set({ activeWorkerCount: n }),
 
+  appendTerminalOutput: (chunk) =>
+    set((s) => ({ terminalOutput: s.terminalOutput + chunk })),
+
+  clearTerminalOutput: () => set({ terminalOutput: '' }),
+
   reset: () =>
     set({
       ...INITIAL,
@@ -230,5 +241,6 @@ export const useVantageStore = create<VantageStoreState>()((set) => ({
       executionPlan: [],
       planApprovalPending: false,
       activeWorkerCount: 0,
+      terminalOutput: '',
     }),
 }));

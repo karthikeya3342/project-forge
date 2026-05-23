@@ -186,13 +186,49 @@ export class SceneManager {
             }
           }
 
-          // Pipeline finished — clear all FX
+          // Pipeline finished — show all-complete for 5s, then clear
           if (!s.currentNode) {
-            this.vantageFX?.clearAll();
-            completedAgents.length = 0;
+            if (prev.currentNode && !completedAgents.includes(prev.currentNode)) {
+              completedAgents.push(prev.currentNode);
+            }
+            this.vantageFX?.updateStatusBoard('', completedAgents);
+            setTimeout(() => {
+              this.vantageFX?.clearAll();
+              completedAgents.length = 0;
+            }, 5000);
           }
         }
 
+      })
+    );
+
+    // ── Worker NPCs: animate idle agent NPCs as parallel workers ─────────
+    const workerNpcSlots = [4, 3, 2, 5, 1]; // worker 0→NPC4, 1→NPC3, 2→NPC2, 3→NPC5, 4→NPC1
+    this.unsubs.push(
+      useVantageStore.subscribe((s, prev) => {
+        const set = getActiveAgentSet();
+        if (set.id !== 'vantage') return;
+        if (s.activeWorkerCount === prev.activeWorkerCount) return;
+
+        const newCount = Math.min(s.activeWorkerCount, 5);
+        const prevCount = Math.min(prev.activeWorkerCount, 5);
+
+        if (newCount > prevCount) {
+          // New workers started — activate their NPC slots
+          for (let i = prevCount; i < newCount; i++) {
+            const npcIdx = workerNpcSlots[i];
+            this.setNpcWorking(npcIdx, true);
+            this.vantageFX?.addGroundGlow(npcIdx);
+          }
+        } else {
+          // Workers finished — deactivate their NPC slots
+          for (let i = newCount; i < prevCount; i++) {
+            const npcIdx = workerNpcSlots[i];
+            this.setNpcWorking(npcIdx, false);
+            this.moveNpcToSpawn(npcIdx);
+            this.vantageFX?.removeGroundGlow(npcIdx);
+          }
+        }
       })
     );
 

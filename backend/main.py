@@ -282,7 +282,7 @@ async def workspace_tree(path: str):
     return {"tree": _build(root)}
 
 
-# ── WebSocket ──────────────────────────────────────────────────────────────
+# ── WebSocket — telemetry broadcast ───────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -292,6 +292,103 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()  # keep connection alive
     except WebSocketDisconnect:
         active_connections.discard(websocket)
+
+
+# ── WebSocket — integrated terminal ───────────────────────────────────────
+@app.websocket("/ws/terminal")
+async def terminal_ws(websocket: WebSocket):
+    """
+    Persistent command-by-command terminal session.
+    Client sends: {"type": "init", "cwd": "..."} | {"type": "command", "command": "..."}
+    Server sends: {"type": "output", "text": "..."} | {"type": "done", "returncode": N} | {"type": "cwd", "path": "..."}
+    """
+    await websocket.accept()
+    import platform
+
+    cwd: str = os.getcwd()
+
+    async def _stream_command(cmd: str) -> None:
+        nonlocal cwd
+        # Handle cd specially so directory persists across commands
+        if cmd.startswith("cd ") or cmd == "cd":
+            target = cmd[3:].strip() if cmd.startswith("cd ") else ""
+            if not target or target == "~":
+                new_dir = str(Path.home())
+            else:
+                new_dir = str(Path(cwd) / target)
+            try:
+                new_dir = str(Path(new_dir).resolve())
+                if Path(new_dir).is_dir():
+                    cwd = new_dir
+                    await websocket.send_text(json.dumps({"type": "cwd", "path": cwd}))
+                    await websocket.send_text(json.dumps({"type": "done", "returncode": 0}))
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "output", "text": f"cd: {target}: No such directory\n"
+                    }))
+                    await websocket.send_text(json.dumps({"type": "done", "returncode": 1}))
+            except Exception as e:
+                await websocket.send_text(json.dumps({"type": "output", "text": f"cd error: {e}\n"}))
+                await websocket.send_text(json.dumps({"type": "done", "returncode": 1}))
+            return
+
+        # Run command as subprocess, stream output
+        try:
+            shell = True
+            if platform.system() == "Windows":
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    cwd=cwd,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    cwd=cwd,
+                    executable="/bin/bash",
+                )
+
+            while True:
+                chunk = await proc.stdout.read(2048)
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", errors="replace")
+                await websocket.send_text(json.dumps({"type": "output", "text": text}))
+
+            returncode = await proc.wait()
+            await websocket.send_text(json.dumps({"type": "done", "returncode": returncode}))
+        except Exception as e:
+            await websocket.send_text(json.dumps({"type": "output", "text": f"Error: {e}\n"}))
+            await websocket.send_text(json.dumps({"type": "done", "returncode": 1}))
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            data = json.loads(raw)
+            msg_type = data.get("type")
+
+            if msg_type == "init":
+                init_cwd = data.get("cwd", "")
+                if init_cwd and Path(init_cwd).is_dir():
+                    cwd = str(Path(init_cwd).resolve())
+                await websocket.send_text(json.dumps({"type": "cwd", "path": cwd}))
+                await websocket.send_text(json.dumps({
+                    "type": "output",
+                    "text": f"Terminal ready\n",
+                }))
+
+            elif msg_type == "command":
+                cmd = data.get("command", "").strip()
+                if cmd:
+                    await _stream_command(cmd)
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

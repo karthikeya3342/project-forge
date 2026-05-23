@@ -23,6 +23,9 @@ const AGENT_INDEX: Record<string, number> = {
   autocoderover:  5,
 };
 
+// Worker ID → NPC index (reuses idle agent NPCs)
+const WORKER_NPC_MAP: Record<number, number> = { 0: 4, 1: 3, 2: 2, 3: 5, 4: 1 };
+
 // Backend agent name → display label
 const AGENT_LABEL: Record<string, string> = {
   orchestrator:   'Orchestrator',
@@ -218,8 +221,10 @@ export function connectVantageWs() {
         vantage.appendWsLog({ ts: Date.now(), raw, packet });
       }
       const agentName = (packet.agent as string) ?? '';
-      // worker_0, worker_1 etc all animate the swe_agent NPC (index 4)
-      const agentIdx = agentName.startsWith('worker_') ? 4 : AGENT_INDEX[agentName];
+      // worker_N maps to dedicated NPC slot (reuses idle NPCs from other agents)
+      const agentIdx = agentName.startsWith('worker_')
+        ? WORKER_NPC_MAP[parseInt(agentName.replace('worker_', ''), 10)] ?? 4
+        : AGENT_INDEX[agentName];
       const label = AGENT_LABEL[agentName] ?? agentName;
       const state = packet.state as string | undefined;
       const message = packet.message as string | undefined;
