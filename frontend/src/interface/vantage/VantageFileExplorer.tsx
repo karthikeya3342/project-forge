@@ -108,7 +108,7 @@ export const VantageFileExplorer: React.FC = () => {
   }, [llmConfig?.workspacePath]);
 
   return (
-    <div className="w-56 h-full bg-white border-r border-zinc-200 flex flex-col overflow-hidden shrink-0">
+    <div className="w-full h-full bg-white border-r border-zinc-200 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="h-9 flex items-center px-3 border-b border-zinc-200 shrink-0">
         <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400">

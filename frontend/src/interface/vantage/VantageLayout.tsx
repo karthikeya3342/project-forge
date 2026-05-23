@@ -12,27 +12,51 @@ interface VantageLayoutProps {
   canvasRef: React.RefObject<HTMLDivElement>;
 }
 
+function useDragResize(
+  initial: number,
+  min: number,
+  max: number,
+  axis: 'x' | 'y',
+  invert = false,
+) {
+  const [size, setSize] = useState(initial);
+  const ref = useRef<{ start: number; startSize: number } | null>(null);
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const pos = axis === 'x' ? e.clientX : e.clientY;
+      ref.current = { start: pos, startSize: size };
+
+      const onMove = (ev: MouseEvent) => {
+        if (!ref.current) return;
+        const curr = axis === 'x' ? ev.clientX : ev.clientY;
+        const delta = invert ? ref.current.start - curr : curr - ref.current.start;
+        setSize(Math.max(min, Math.min(max, ref.current.startSize + delta)));
+      };
+      const onUp = () => {
+        ref.current = null;
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    },
+    [size, axis, invert, min, max],
+  );
+
+  return [size, onMouseDown] as const;
+}
+
 export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
   const { mainView, setMainView } = useVantageStore();
-  const [consoleHeight, setConsoleHeight] = useState(176);
-  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
 
-  const onDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    dragRef.current = { startY: e.clientY, startH: consoleHeight };
-    const onMove = (ev: MouseEvent) => {
-      if (!dragRef.current) return;
-      const delta = dragRef.current.startY - ev.clientY;
-      setConsoleHeight(Math.max(80, Math.min(600, dragRef.current.startH + delta)));
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, [consoleHeight]);
+  // Vertical: console height (drag up = bigger)
+  const [consoleHeight, onConsoleDrag] = useDragResize(176, 80, 600, 'y', true);
+  // Horizontal: explorer width (drag right = bigger)
+  const [explorerWidth, onExplorerDrag] = useDragResize(224, 120, 480, 'x');
+  // Horizontal: telemetry width (drag left = bigger, so invert)
+  const [telemetryWidth, onTelemetryDrag] = useDragResize(320, 160, 560, 'x', true);
 
   return (
     <div className="w-screen h-screen bg-white flex flex-col overflow-hidden">
@@ -41,8 +65,20 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
 
       {/* Main body */}
       <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
-        {/* Left: File Explorer */}
-        <VantageFileExplorer />
+
+        {/* Left: File Explorer — resizable width */}
+        <div style={{ width: explorerWidth }} className="shrink-0 h-full overflow-hidden flex">
+          <div className="flex-1 overflow-hidden">
+            <VantageFileExplorer />
+          </div>
+        </div>
+
+        {/* Drag handle: explorer ↔ center */}
+        <div
+          onMouseDown={onExplorerDrag}
+          className="w-1.5 h-full cursor-col-resize bg-zinc-100 hover:bg-cyan-400 active:bg-cyan-500 transition-colors shrink-0"
+          title="Drag to resize explorer"
+        />
 
         {/* Center: canvas / code + console */}
         <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
@@ -72,9 +108,8 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
             </button>
           </div>
 
-          {/* Canvas area (always mounted, visibility toggled) */}
+          {/* Canvas area */}
           <div className="flex-1 relative min-h-0 overflow-hidden">
-            {/* Three.js canvas — always in DOM so SceneManager never loses its target */}
             <div
               ref={canvasRef}
               className="absolute inset-0 bg-zinc-900"
@@ -82,8 +117,6 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
             >
               <UIOverlay />
             </div>
-
-            {/* Monaco code view — overlays canvas when in code mode */}
             {mainView === 'code' && (
               <div className="absolute inset-0 z-10">
                 <VantageCodeView />
@@ -91,9 +124,9 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
             )}
           </div>
 
-          {/* Drag handle */}
+          {/* Drag handle: canvas ↔ console */}
           <div
-            onMouseDown={onDragStart}
+            onMouseDown={onConsoleDrag}
             className="h-1.5 shrink-0 cursor-row-resize bg-zinc-100 hover:bg-cyan-400 active:bg-cyan-500 transition-colors"
             title="Drag to resize console"
           />
@@ -104,8 +137,18 @@ export const VantageLayout: React.FC<VantageLayoutProps> = ({ canvasRef }) => {
           </div>
         </div>
 
-        {/* Right: Telemetry */}
-        <VantageTelemetryPanel />
+        {/* Drag handle: center ↔ telemetry */}
+        <div
+          onMouseDown={onTelemetryDrag}
+          className="w-1.5 h-full cursor-col-resize bg-zinc-100 hover:bg-cyan-400 active:bg-cyan-500 transition-colors shrink-0"
+          title="Drag to resize panel"
+        />
+
+        {/* Right: Telemetry — resizable width */}
+        <div style={{ width: telemetryWidth }} className="shrink-0 h-full overflow-hidden">
+          <VantageTelemetryPanel />
+        </div>
+
       </div>
     </div>
   );

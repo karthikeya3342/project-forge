@@ -1,4 +1,4 @@
-import { Info, KeyRound, Maximize2, Settings } from 'lucide-react';
+import { Info, KeyRound, Maximize2 } from 'lucide-react';
 import React, { useState } from 'react';
 import packageJson from '../../package.json';
 import { useCoreStore } from '../integration/store/coreStore';
@@ -34,7 +34,7 @@ const Header: React.FC = () => {
               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
             </svg>
           </div>
-          <span className="text-[15px] font-black tracking-widest text-zinc-900 uppercase">VANTAGE</span>
+          <span className="text-[15px] font-black tracking-widest text-zinc-900 uppercase">FORGE</span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -49,15 +49,6 @@ const Header: React.FC = () => {
 
       {/* Right: Global Controls */}
       <div className="flex items-center gap-3">
-
-        <button
-          onClick={() => setViewMode('design')}
-          className="flex items-center gap-2 px-3 py-1 bg-darkDelegation hover:bg-darkDelegation text-white rounded-lg transition-all shadow-lg shadow-black/10 active:scale-95 cursor-pointer h-9 shrink-0 ml-1"
-          title="Manage Teams"
-        >
-          <Settings size={14} className="group-hover:rotate-45 transition-transform" />
-          <span className="text-[10px] font-black uppercase tracking-wider ml-1 hidden sm:inline">Manage Teams</span>
-        </button>
 
         <div className="w-px h-4 bg-zinc-200" />
 

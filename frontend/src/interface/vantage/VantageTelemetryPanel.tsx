@@ -286,14 +286,14 @@ export const VantageTelemetryPanel: React.FC = () => {
   const visibleMessages = messages.filter((m: any) => !m.metadata?.internal);
 
   return (
-    <div className="w-80 h-full bg-white border-l border-zinc-100 flex flex-col overflow-hidden shrink-0">
+    <div className="w-full h-full bg-white border-l border-zinc-100 flex flex-col overflow-hidden">
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="h-9 flex items-center justify-between px-3 border-b border-zinc-100 shrink-0">
         <div className="flex items-center gap-1.5">
           <Terminal size={11} className="text-zinc-400" />
           <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400">
-            VANTAGE
+            FORGE
           </span>
         </div>
         {currentNode && (
