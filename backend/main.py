@@ -277,9 +277,8 @@ async def workspace_tree(path: str):
         result = []
         try:
             for entry in sorted(os.scandir(p), key=lambda e: (not e.is_dir(), e.name)):
-                rel = os.path.relpath(entry.path, root)
                 node = {
-                    "path": rel.replace("\\", "/"),
+                    "path": entry.path.replace("\\", "/"),
                     "name": entry.name,
                     "type": "directory" if entry.is_dir() else "file",
                 }
