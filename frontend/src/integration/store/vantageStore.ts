@@ -47,7 +47,7 @@ export interface TerminalLogEntry {
 }
 
 type MainView = '3d' | 'code';
-type ConsoleTab = 'events' | 'terminal';
+type ConsoleTab = 'events' | 'agent-terminal' | 'terminal';
 export type PlanStepStatus = 'pending' | 'working' | 'done' | 'error';
 
 interface VantageStoreState {

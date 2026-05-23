@@ -282,6 +282,22 @@ async def workspace_tree(path: str):
     return {"tree": _build(root)}
 
 
+@app.get("/api/browse-folder")
+async def browse_folder():
+    """Open native OS folder picker dialog, return selected path."""
+    import tkinter as tk
+    from tkinter import filedialog
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes('-topmost', True)
+        path = filedialog.askdirectory(title="Select Workspace Folder")
+        root.destroy()
+        return {"path": path.replace("/", "\\") if path else ""}
+    except Exception as e:
+        return {"path": "", "error": str(e)}
+
+
 # ── WebSocket — telemetry broadcast ───────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

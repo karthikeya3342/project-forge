@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Trash2, X } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, Trash2, X } from 'lucide-react';
 import React, { useState } from 'react';
 import { useUiStore } from '../integration/store/uiStore';
 import { DEFAULT_MODELS } from '../core/llm/constants';
@@ -16,6 +16,20 @@ const BYOKModal: React.FC<BYOKModalProps> = ({ onClose }) => {
   const [workspacePath, setWorkspacePath] = useState<string>((llmConfig as any).workspacePath || '');
   const [showKey, setShowKey] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
+
+  const handleBrowse = async () => {
+    setBrowsing(true);
+    try {
+      const res = await fetch('http://localhost:8000/api/browse-folder');
+      const data = await res.json();
+      if (data.path) setWorkspacePath(data.path);
+    } catch {
+      // backend not running — fall back to text input
+    } finally {
+      setBrowsing(false);
+    }
+  };
 
   const handleSave = () => {
     const config = {
@@ -120,7 +134,6 @@ const BYOKModal: React.FC<BYOKModalProps> = ({ onClose }) => {
             );
           })()}
 
-
           {/* API Key input */}
           <div className="mb-6">
             <label className="block text-[11px] font-black uppercase tracking-[0.2em] text-zinc-300 mb-4 ml-1">
@@ -144,20 +157,36 @@ const BYOKModal: React.FC<BYOKModalProps> = ({ onClose }) => {
             </div>
           </div>
 
-          {/* VANTAGE Workspace Path */}
+          {/* VANTAGE Workspace Path — folder picker */}
           <div className="mb-10">
             <label className="block text-[11px] font-black uppercase tracking-[0.2em] text-zinc-300 mb-4 ml-1">
-              VANTAGE Workspace Path
+              VANTAGE Workspace Folder
             </label>
-            <input
-              type="text"
-              value={workspacePath}
-              onChange={(e) => setWorkspacePath(e.target.value)}
-              placeholder="C:\Users\YourName\Projects\AgentWorkspace"
-              className="w-full bg-zinc-50 border border-zinc-100 rounded-3xl px-6 py-4 text-sm text-darkDelegation font-mono placeholder:text-zinc-300 placeholder:font-sans focus:outline-none focus:border-zinc-200 transition-all shadow-sm hover:shadow-md"
-            />
+            <div className="flex gap-2 items-stretch">
+              {/* Path display */}
+              <div className="flex-1 min-w-0 bg-zinc-50 border border-zinc-100 rounded-3xl px-6 py-4 text-sm font-mono overflow-hidden">
+                {workspacePath ? (
+                  <span className="text-darkDelegation truncate block" title={workspacePath}>
+                    {workspacePath}
+                  </span>
+                ) : (
+                  <span className="text-zinc-300">No folder selected</span>
+                )}
+              </div>
+              {/* Browse button */}
+              <button
+                type="button"
+                onClick={handleBrowse}
+                disabled={browsing}
+                title="Select workspace folder"
+                className="shrink-0 flex items-center gap-2 px-5 bg-zinc-100 hover:bg-zinc-200 border border-zinc-100 rounded-3xl text-xs font-black uppercase tracking-wider text-zinc-500 hover:text-zinc-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <FolderOpen size={15} strokeWidth={2.5} />
+                {browsing ? '…' : 'Browse'}
+              </button>
+            </div>
             <p className="text-[10px] text-zinc-300 mt-2 ml-1">
-              Absolute path — AI operations stay sandboxed here via Docker.
+              AI operations stay sandboxed here via Docker.
             </p>
           </div>
 
